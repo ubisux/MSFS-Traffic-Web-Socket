@@ -10,6 +10,11 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 - Exposes the full aircraft JSON map via a WebSocket server on `localhost`.
 
 ## Version History
+0.2.1
+- Added 'heading', 'transponder', 'transponder_asgn', and 'deptime' fields for aircraft JSON object.
+- Removed 'registration' from the JSON output.
+- VATSIM callsign-based refilling now updates all VATSIM fields every 60s for all aircraft with callsigns, not just those with empty fields.
+
 0.2
 - Added websocket at http://localhost:8080/aircraft
 - fixed build.bat and CMakeLists.txt
@@ -62,23 +67,27 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 
 ## Example JSON Output
 ```json
-{
-  "123": {
-    "simobjectid": 123,
-    "callsign": "AAL123",
-    "latitude": 37.6188056,
-    "longitude": -122.3754167,
-    "altitude": 35000,
-    "groundspeed": 450,
-    "verticalSpeed": 0,
-    "on_ground": 0,
+[
+  {
+    "altitude": 206,
+    "arr": "LEPA",
+    "callsign": "EXS53MP",
+    "dep": "EGKK",
+    "deptime": "1940",
+    "groundspeed": 0,
+    "heading": 1.34990309179687,
+    "last_vatsim_update": 51527,
+    "latitude": 51.1540300045559,
+    "longitude": -0.164100018851852,
+    "on_ground": 1,
+    "simobjectid": 2599,
+    "transponder": "1234",
+    "transponder_asgn": "7270",
     "type": "B738",
-    "registration": "N123AA",
-    "dep": "KSFO",
-    "arr": "KLAX"
+    "verticalSpeed": 0
   },
   ...
-}
+]
 ```
 
 ## Customization

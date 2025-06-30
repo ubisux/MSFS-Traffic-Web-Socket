@@ -14,6 +14,7 @@
 #include <chrono>
 #include <iomanip>
 #include "httplib.h"
+#include <unordered_set>
 #pragma comment(lib, "winhttp.lib")
 
 #ifndef M_PI
@@ -68,9 +69,12 @@ nlohmann::json BuildAircraftJson(
     int verticalSpeed,
     int on_ground,
     const std::string& type,
-    const std::string& registration,
     const std::string& dep,
-    const std::string& arr
+    const std::string& arr,
+    double heading,
+    const std::string& transponder,
+    const std::string& transponder_asgn,
+    const std::string& deptime
 ) {
     nlohmann::json obj = {
         {"simobjectid", simobjectid},
@@ -82,9 +86,12 @@ nlohmann::json BuildAircraftJson(
         {"verticalSpeed", verticalSpeed},
         {"on_ground", on_ground},
         {"type", type},
-        {"registration", registration},
         {"dep", dep},
-        {"arr", arr}
+        {"arr", arr},
+        {"heading", heading * 180.0 / M_PI},
+        {"transponder", transponder},
+        {"transponder_asgn", transponder_asgn},
+        {"deptime", deptime}
     };
     return obj;
 }
@@ -99,12 +106,15 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
     obj["groundspeed"] = static_cast<int>(data.ground_velocity);
     obj["verticalSpeed"] = static_cast<int>(data.vertical_speed);
     obj["on_ground"] = static_cast<int>(data.on_ground);
+    obj["heading"] = data.heading * 180.0 / M_PI;
     // Initialize VATSIM fields if not present, but do not overwrite
     if (!obj.contains("callsign")) obj["callsign"] = "";
     if (!obj.contains("type")) obj["type"] = "";
-    if (!obj.contains("registration")) obj["registration"] = "";
     if (!obj.contains("dep")) obj["dep"] = "";
     if (!obj.contains("arr")) obj["arr"] = "";
+    if (!obj.contains("transponder")) obj["transponder"] = "";
+    if (!obj.contains("transponder_asgn")) obj["transponder_asgn"] = "";
+    if (!obj.contains("deptime")) obj["deptime"] = "";
     std::cout << obj.dump() << std::endl;
     // std::cout << "Aircraft " << object_id
     //     << ": Alt=" << data.altitude << " ft"
@@ -184,16 +194,67 @@ void CorrelateVatsimToSimConnect() {
         int closestPilotIdx = -1;
         double closestDist = 1e9;
         bool canUpdate = false;
+        bool needsVatsimFieldUpdate = false;
+        bool hasCallsign = false;
+        std::string simCallsign;
+        std::optional<std::int64_t> lastVatsimUpdate;
         {
             std::lock_guard<std::mutex> simLock(simAircraftMutex);
             auto& simjson = simAircraftMap[simid];
+            hasCallsign = !simjson["callsign"].get<std::string>().empty();
+            simCallsign = simjson["callsign"].get<std::string>();
+            needsVatsimFieldUpdate = hasCallsign;
+            lastVatsimUpdate = simjson.contains("last_vatsim_update") ? std::optional<std::int64_t>(simjson["last_vatsim_update"].get<std::int64_t>()) : std::nullopt;
             bool vatsimFieldsEmpty = simjson["callsign"].get<std::string>().empty();
-            auto it = simjson.contains("last_vatsim_update") ? std::optional<std::int64_t>(simjson["last_vatsim_update"].get<std::int64_t>()) : std::nullopt;
             canUpdate = vatsimFieldsEmpty;
-            if (!canUpdate && it) {
-                auto now = std::chrono::steady_clock::now();
-                auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count() - *it;
+            if (!canUpdate && lastVatsimUpdate) {
+                auto nowSec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+                auto elapsed = nowSec - *lastVatsimUpdate;
                 if (elapsed >= 300) canUpdate = true;
+            }
+        }
+        // --- New logic: If has callsign, try to update by callsign every 60s ---
+        if (needsVatsimFieldUpdate && lastVatsimUpdate) {
+            auto nowSec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+            auto elapsed = nowSec - *lastVatsimUpdate;
+            if (elapsed >= 60) {
+                // Try to find pilot by callsign
+                int foundIdx = -1;
+                for (size_t i = 0; i < vatsimData["pilots"].size(); ++i) {
+                    const auto& pilot = vatsimData["pilots"][i];
+                    if (pilot.contains("callsign") && pilot["callsign"].is_string() && pilot["callsign"].get<std::string>() == simCallsign) {
+                        foundIdx = static_cast<int>(i);
+                        break;
+                    }
+                }
+                if (foundIdx != -1) {
+                    const auto& pilot = vatsimData["pilots"][foundIdx];
+                    std::lock_guard<std::mutex> simLock(simAircraftMutex);
+                    auto& simjson = simAircraftMap[simid];
+                    // Update all VATSIM fields
+                    if (pilot.contains("aircraft_short") && pilot["aircraft_short"].is_string()) {
+                        simjson["type"] = pilot["aircraft_short"].get<std::string>();
+                    } else if (pilot.contains("flight_plan") && pilot["flight_plan"].contains("aircraft_short") && pilot["flight_plan"]["aircraft_short"].is_string()) {
+                        simjson["type"] = pilot["flight_plan"]["aircraft_short"].get<std::string>();
+                    } else {
+                        simjson["type"] = "";
+                    }
+                    if (pilot.contains("flight_plan")) {
+                        const auto& fp = pilot["flight_plan"];
+                        simjson["dep"] = (fp.contains("departure") && fp["departure"].is_string()) ? fp["departure"].get<std::string>() : "";
+                        simjson["arr"] = (fp.contains("arrival") && fp["arrival"].is_string()) ? fp["arrival"].get<std::string>() : "";
+                        simjson["deptime"] = (fp.contains("deptime") && fp["deptime"].is_string()) ? fp["deptime"].get<std::string>() : "";
+                        simjson["transponder_asgn"] = (fp.contains("assigned_transponder") && fp["assigned_transponder"].is_string()) ? fp["assigned_transponder"].get<std::string>() : "";
+                    } else {
+                        simjson["dep"] = "";
+                        simjson["arr"] = "";
+                        simjson["deptime"] = "";
+                        simjson["transponder_asgn"] = "";
+                    }
+                    simjson["transponder"] = pilot.value("transponder", "");
+                    simjson["last_vatsim_update"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+                    std::cout << "Filled missing VATSIM fields by callsign: " << simjson.dump() << std::endl;
+                }
             }
         }
         if (canUpdate) {
@@ -236,14 +297,17 @@ void CorrelateVatsimToSimConnect() {
                     }
                     if (pilot.contains("flight_plan")) {
                         const auto& fp = pilot["flight_plan"];
-                        simjson["registration"] = (fp.contains("registration") && fp["registration"].is_string()) ? fp["registration"].get<std::string>() : "";
                         simjson["dep"] = (fp.contains("departure") && fp["departure"].is_string()) ? fp["departure"].get<std::string>() : "";
                         simjson["arr"] = (fp.contains("arrival") && fp["arrival"].is_string()) ? fp["arrival"].get<std::string>() : "";
+                        simjson["deptime"] = (fp.contains("deptime") && fp["deptime"].is_string()) ? fp["deptime"].get<std::string>() : "";
+                        simjson["transponder_asgn"] = (fp.contains("assigned_transponder") && fp["assigned_transponder"].is_string()) ? fp["assigned_transponder"].get<std::string>() : "";
                     } else {
-                        simjson["registration"] = "";
                         simjson["dep"] = "";
                         simjson["arr"] = "";
+                        simjson["deptime"] = "";
+                        simjson["transponder_asgn"] = "";
                     }
+                    simjson["transponder"] = pilot.value("transponder", "");
                     simjson["last_vatsim_update"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
                     std::cout << "Correlated: " << simjson.dump() << std::endl;
                 }
@@ -345,6 +409,48 @@ void HttpServerThread() {
     svr.listen("0.0.0.0", 8080);
 }
 
+// Helper to remove stale aircraft from simAircraftMap
+void CleanupStaleSimObjects(const std::unordered_set<int>& seenIds) {
+    std::lock_guard<std::mutex> lock(simAircraftMutex);
+    for (auto it = simAircraftMap.begin(); it != simAircraftMap.end(); ) {
+        if (seenIds.find(it->first) == seenIds.end()) {
+            it = simAircraftMap.erase(it);
+        } else {
+            ++it;
+        }
+    }
+}
+
+// New: Helper dispatch proc to update seenSimObjectIds
+void CALLBACK MyDispatchProcWithSeenSet(SIMCONNECT_RECV* pData, DWORD cbData, void* pContext) {
+    auto* seenSimObjectIds = static_cast<std::unordered_set<int>*>(pContext);
+    switch (pData->dwID) {
+        case SIMCONNECT_RECV_ID_SIMOBJECT_DATA_BYTYPE: {
+            SIMCONNECT_RECV_SIMOBJECT_DATA_BYTYPE* pObjData = (SIMCONNECT_RECV_SIMOBJECT_DATA_BYTYPE*)pData;
+            if (pObjData->dwRequestID == REQUEST_AI_AIRCRAFT) {
+                if (pObjData->dwSize >= sizeof(AircraftData)) {
+                    AircraftData* data = (AircraftData*)&pObjData->dwData;
+                    PrintAircraftData(*data, pObjData->dwObjectID);
+                    if (seenSimObjectIds) seenSimObjectIds->insert(static_cast<int>(pObjData->dwObjectID));
+                }
+            }
+            break;
+        }
+        case SIMCONNECT_RECV_ID_EXCEPTION: {
+            SIMCONNECT_RECV_EXCEPTION* pEx = (SIMCONNECT_RECV_EXCEPTION*)pData;
+            std::cout << "SimConnect Exception: " << pEx->dwException << std::endl;
+            break;
+        }
+        case SIMCONNECT_RECV_ID_QUIT: {
+            std::cout << "SimConnect quit received." << std::endl;
+            quit = true;
+            break;
+        }
+        default:
+            break;
+    }
+}
+
 int main() {
     HRESULT hr = SimConnect_Open(&hSimConnect, "MSFS SimConnect Bridge", nullptr, 0, 0, 0);
     if (FAILED(hr)) {
@@ -379,11 +485,12 @@ int main() {
             std::cerr << "Failed to request aircraft data: " << std::hex << hr << std::endl;
             break;
         }
+        std::unordered_set<int> seenSimObjectIds;
         for (int i = 0; i < 10 && !quit; ++i) {
-            SimConnect_CallDispatch(hSimConnect, MyDispatchProc, nullptr);
+            SimConnect_CallDispatch(hSimConnect, MyDispatchProcWithSeenSet, &seenSimObjectIds);
             Sleep(100);
         }
-        // Log SimConnect polling thread ID for proof
+        CleanupStaleSimObjects(seenSimObjectIds);
         std::cout << "SimConnect polling... (thread " << std::this_thread::get_id() << ")" << std::endl;
     }
 
