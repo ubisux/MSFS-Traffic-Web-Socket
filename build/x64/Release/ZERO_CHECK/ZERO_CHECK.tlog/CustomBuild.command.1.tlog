@@ -1,6 +1,6 @@
-^E:\MSFS\DEVELOPMENT\TOWERVIEW\SRC\BUILD\CMAKEFILES\A679C36E53799028D86C270DF6E1814C\GENERATE.STAMP.RULE
+^E:\MSFS\DEVELOPMENT\TOWERVIEW\BUILD\CMAKEFILES\0FEBD1FACF99F40F0D5E7F738BDE7511\GENERATE.STAMP.RULE
 setlocal
-"G:\Program Files\CMake\bin\cmake.exe" -SE:/MSFS/Development/Towerview/src -BE:/MSFS/Development/Towerview/src/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file E:/MSFS/Development/Towerview/src/build/simconnect_bridge.sln
+"G:\Program Files\CMake\bin\cmake.exe" -SE:/MSFS/Development/Towerview/src -BE:/MSFS/Development/Towerview/build --check-stamp-list CMakeFiles/generate.stamp.list --vs-solution-file E:/MSFS/Development/Towerview/build/simconnect_bridge.sln
 if %errorlevel% neq 0 goto :cmEnd
 :cmEnd
 endlocal & call :cmErrorLevel %errorlevel% & goto :cmDone

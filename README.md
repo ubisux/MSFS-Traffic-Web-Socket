@@ -10,6 +10,10 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 - Exposes the full aircraft JSON map via a WebSocket server on `localhost`.
 
 ## Version History
+0.2
+- Added websocket at http://localhost:8080/aircraft
+- fixed build.bat and CMakeLists.txt
+
 0.1.1
 - No longer showing each line of calculation of distance for every VATSIM pilot.
 - Moved the build folder out by one level (now at project root).

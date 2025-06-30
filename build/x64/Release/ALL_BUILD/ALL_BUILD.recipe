@@ -2,13 +2,13 @@
 <Project>
   <ProjectOutputs>
     <ProjectOutput>
-      <FullPath>E:\MSFS\Development\Towerview\src\build\x64\Release\ZERO_CHECK</FullPath>
+      <FullPath>E:\MSFS\Development\Towerview\build\x64\Release\ZERO_CHECK</FullPath>
     </ProjectOutput>
     <ProjectOutput>
-      <FullPath>E:\MSFS\Development\Towerview\src\build\Release\simconnect_bridge.exe</FullPath>
+      <FullPath>E:\MSFS\Development\Towerview\build\Release\simconnect_bridge.exe</FullPath>
     </ProjectOutput>
     <ProjectOutput>
-      <FullPath>E:\MSFS\Development\Towerview\src\build\x64\Release\ALL_BUILD</FullPath>
+      <FullPath>E:\MSFS\Development\Towerview\build\x64\Release\ALL_BUILD</FullPath>
     </ProjectOutput>
   </ProjectOutputs>
   <ContentFiles />

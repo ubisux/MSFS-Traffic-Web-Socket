@@ -1,7 +1,7 @@
 {
 	"InstallScripts" : 
 	[
-		"E:/MSFS/Development/Towerview/src/build/cmake_install.cmake"
+		"E:/MSFS/Development/Towerview/build/cmake_install.cmake"
 	],
 	"Parallel" : false
 }

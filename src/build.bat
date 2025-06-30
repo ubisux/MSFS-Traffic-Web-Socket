@@ -9,7 +9,7 @@ if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 cd /d "%BUILD_DIR%"
 
 echo [1/3] Configuring with CMake...
-cmake ..
+cmake ../src
 if errorlevel 1 goto :error
 
 echo [2/3] Building Release configuration...

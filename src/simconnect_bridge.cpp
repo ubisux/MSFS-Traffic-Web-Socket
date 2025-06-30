@@ -1,3 +1,4 @@
+#include <winsock2.h>
 #include <windows.h>
 #include "SimConnect.h"
 #include <iostream>
@@ -12,6 +13,7 @@
 #include <atomic>
 #include <chrono>
 #include <iomanip>
+#include "httplib.h"
 #pragma comment(lib, "winhttp.lib")
 
 #ifndef M_PI
@@ -329,6 +331,20 @@ void VatsimFetchThread() {
     }
 }
 
+void HttpServerThread() {
+    httplib::Server svr;
+    svr.Get("/aircraft", [](const httplib::Request&, httplib::Response& res) {
+        std::lock_guard<std::mutex> lock(simAircraftMutex);
+        nlohmann::json arr = nlohmann::json::array();
+        for (const auto& [id, obj] : simAircraftMap) {
+            arr.push_back(obj);
+        }
+        res.set_content(arr.dump(), "application/json");
+    });
+    std::cout << "HTTP server running on http://localhost:8080/aircraft" << std::endl;
+    svr.listen("0.0.0.0", 8080);
+}
+
 int main() {
     HRESULT hr = SimConnect_Open(&hSimConnect, "MSFS SimConnect Bridge", nullptr, 0, 0, 0);
     if (FAILED(hr)) {
@@ -353,6 +369,9 @@ int main() {
     // Start VATSIM fetch thread
     std::thread vatsimThread(VatsimFetchThread);
 
+    // Start HTTP server thread
+    std::thread httpThread(HttpServerThread);
+
     while (!quit) {
         // Request all AI aircraft within 50km every second
         hr = SimConnect_RequestDataOnSimObjectType(hSimConnect, REQUEST_AI_AIRCRAFT, DEFINITION_1, 50000, SIMCONNECT_SIMOBJECT_TYPE_AIRCRAFT);
@@ -371,6 +390,7 @@ int main() {
     // Signal VATSIM thread to quit and join
     quit = true;
     if (vatsimThread.joinable()) vatsimThread.join();
+    if (httpThread.joinable()) httpThread.join();
 
     SimConnect_Close(hSimConnect);
     std::cout << "SimConnect bridge closed." << std::endl;
