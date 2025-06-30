@@ -3,7 +3,7 @@ setlocal
 
 REM Build script for simconnect_bridge
 set SRC_DIR=%~dp0
-set BUILD_DIR=%SRC_DIR%build
+set BUILD_DIR=%SRC_DIR%..\build
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 cd /d "%BUILD_DIR%"
