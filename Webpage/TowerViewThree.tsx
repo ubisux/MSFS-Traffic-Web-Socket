@@ -96,12 +96,24 @@ function CameraControls() {
     const onPointerUp = () => {
       isDragging.current = false;
     };
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0) {
+        // Scroll up: zoom in (decrease FOV)
+        camera.fov = Math.max(10, camera.fov - 1.0);
+        camera.updateProjectionMatrix();
+      } else if (e.deltaY > 0) {
+        // Scroll down: zoom out (increase FOV)
+        camera.fov = Math.min(120, camera.fov + 1.0);
+        camera.updateProjectionMatrix();
+      }
+    };
 
     window.addEventListener("keydown", onKeyDown);
     window.addEventListener("keyup", onKeyUp);
     gl.domElement.addEventListener("pointerdown", onPointerDown);
     window.addEventListener("pointermove", onPointerMove);
     window.addEventListener("pointerup", onPointerUp);
+    gl.domElement.addEventListener("wheel", onWheel);
 
     return () => {
       window.removeEventListener("keydown", onKeyDown);
@@ -109,6 +121,7 @@ function CameraControls() {
       gl.domElement.removeEventListener("pointerdown", onPointerDown);
       window.removeEventListener("pointermove", onPointerMove);
       window.removeEventListener("pointerup", onPointerUp);
+      gl.domElement.removeEventListener("wheel", onWheel);
     };
   }, [camera, gl]);
 
@@ -385,7 +398,6 @@ function useCDM() {
 
 // ----- Main Tower View Component -----
 interface TowerViewProps {
-  data: [string, any][];
   options: {
     lat: number;
     lon: number;
@@ -399,7 +411,6 @@ interface TowerViewProps {
   };
 }
 export default function TowerViewThree({
-  data,
   options,
 }: Readonly<TowerViewProps>) {
   // Local state for overlay controls.
@@ -419,9 +430,147 @@ export default function TowerViewThree({
   // Compute the initial camera position.
   const pos = toMercator([options.lon, options.lat]);
 
+  // Add these states inside the main component (where cameraInstance and cameraState are defined):
+  const [lonInput, setLonInput] = useState<string | undefined>(undefined);
+  const [latInput, setLatInput] = useState<string | undefined>(undefined);
+  const [altInput, setAltInput] = useState<string | undefined>(undefined);
+  const [headingInput, setHeadingInput] = useState<string | undefined>(undefined);
+  const [pitchInput, setPitchInput] = useState<string | undefined>(undefined);
+  const [rollInput, setRollInput] = useState<string | undefined>(undefined);
+  const [fovInput, setFovInput] = useState<string | undefined>(undefined);
+
   // Three.js camera expects fov in degrees.
+
+  // Add at the top of the component (after other useState):
+  const backgroundColors = [
+    "rgba(0,0,0,0)", // Default transparent
+    "#000000", // K
+    "#ffffff", // W
+    "#ff0000", // R
+    "#00ff00", // G
+    "#0000ff", // B
+    "#00ffff", // C
+    "#ffff00", // Y
+    "#ff00ff", // M
+  ];
+  const [bgIndex, setBgIndex] = useState(0); // Start with transparent
+  const [calibrationMode, setCalibrationMode] = useState(false);
+  const [calibrationImage, setCalibrationImage] = useState<string | null>(null);
+  const [calibrationPoints, setCalibrationPoints] = useState<
+    { x: number; y: number; lat: string; lon: string; alt: string }[]
+  >([]);
+  const [activePointIdx, setActivePointIdx] = useState<number | null>(null);
+
+  // Helper for validation
+  const isPointValid = (pt: { lat: string; lon: string; alt: string }) =>
+    pt.lat !== '' && pt.lon !== '' && pt.alt !== '' &&
+    !isNaN(Number(pt.lat)) && !isNaN(Number(pt.lon)) && !isNaN(Number(pt.alt));
+
+  const confirmedPointsCount = calibrationPoints.filter(isPointValid).length;
+
+  // Show Calculate button if at least 4 points and the 4th (most recent) is valid
+  const showCalculate = calibrationPoints.length >= 4 && isPointValid(calibrationPoints[3]);
+
+  // Add at the top of the component (after other useState):
+  const [calculationResult, setCalculationResult] = useState<null | {
+    lon: number;
+    lat: number;
+    alt: number;
+    heading: number;
+    pitch: number;
+    roll: number;
+    fov: number;
+  }>(null);
+
+  // Aircraft polling and refresh rate state
+  const [aircrafts, setAircrafts] = useState<any[]>([]);
+  const [refreshRate, setRefreshRate] = useState(10); // Hz, default 10
+  const minHz = 10;
+  const maxHz = 30;
+
+  useEffect(() => {
+    let timer: any;
+    const fetchAircraft = async () => {
+      try {
+        const res = await fetch("http://localhost:8080/aircraft");
+        if (!res.ok) {
+          setAircrafts([]);
+          return;
+        }
+        let data: any = [];
+        try {
+          data = await res.json();
+        } catch (e) {
+          console.warn("/aircraft response was not valid JSON or was empty");
+          setAircrafts([]);
+          return;
+        }
+        // Expecting data to be an array or object of aircrafts
+        if (Array.isArray(data)) {
+          setAircrafts(data);
+        } else if (data && typeof data === "object" && Object.keys(data).length > 0) {
+          setAircrafts(Object.entries(data));
+        } else {
+          setAircrafts([]);
+          if (data && typeof data === "object") {
+            console.warn("/aircraft response was an empty object");
+          }
+        }
+      } catch (e) {
+        setAircrafts([]);
+        console.warn("Error fetching /aircraft:", e);
+      }
+      // Calculate interval in ms from Hz (Hz can be < 1)
+      const interval = 1000 / Math.max(refreshRate, minHz);
+      timer = setTimeout(fetchAircraft, interval);
+    };
+    fetchAircraft();
+    return () => clearTimeout(timer);
+  }, [refreshRate]);
+
   return (
     <>
+      {/* Calibration overlay (lowest layer, not blocking UI) */}
+      {calibrationMode && (
+        <div
+          style={{
+            position: "fixed",
+            top: 0,
+            left: 0,
+            width: "100vw",
+            height: "100vh",
+            background: "rgba(0,0,0,0.1)",
+            zIndex: 1,
+            pointerEvents: "none",
+          }}
+        />
+      )}
+      {/* Main content (UI, 3D, etc.) */}
+      <div
+        className="relative overflow-hidden w-[1920px] h-[1080px] group"
+        style={calibrationMode && calibrationImage ? {
+          backgroundImage: `url(${calibrationImage})`,
+          backgroundSize: '100% 100%',
+          backgroundPosition: '0 0',
+          backgroundRepeat: 'no-repeat',
+        } : {}}
+        onClick={calibrationMode ? (e) => {
+          const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
+          const x = e.clientX - rect.left;
+          const y = e.clientY - rect.top;
+          if (activePointIdx === null) {
+            // Add and activate new point
+            setCalibrationPoints(points => [...points, { x, y, lat: '', lon: '', alt: '' }]);
+            setActivePointIdx(calibrationPoints.length);
+          } else {
+            // Move active point
+            setCalibrationPoints(points => points.map((pt, idx) =>
+              idx === activePointIdx ? { ...pt, x, y } : pt
+            ));
+          }
+        } : undefined}
+      >
+        <div style={{ background: backgroundColors[bgIndex], width: "100vw", height: "100vh" }}>
       <Canvas
         style={{ width: "100%", height: "100%" }}
         camera={{
@@ -446,27 +595,34 @@ export default function TowerViewThree({
         {guidesVisible && (
           <>
             {vhhh.features.map((feature: any, i: number) => (
-              <GuideLine key={i} feature={feature} elevation={28} />
+              <React.Fragment key={i}>
+                <GuideLine feature={feature} elevation={28} />
+              </React.Fragment>
             ))}
             {vhhx.features.map((feature: any, i: number) => (
-              <GuideLine key={i} feature={feature} elevation={30} />
+              <React.Fragment key={i}>
+                <GuideLine feature={feature} elevation={30} />
+              </React.Fragment>
             ))}
             {vmmc.features.map((feature: any, i: number) => (
-              <GuideLine key={i} feature={feature} elevation={20} />
+              <React.Fragment key={i}>
+                <GuideLine feature={feature} elevation={20} />
+              </React.Fragment>
             ))}
           </>
         )}
         {/* Render each aircraft marker */}
-        {data.map(([id, value]) => (
-          <AircraftMarker
-            key={id}
-            id={id}
-            value={value}
-            transmitting={transmitting}
-            dark={dark}
-            detailsVisible={detailsVisible}
-            cdmData={cdmData.find((x) => x.callsign === id)}
-          />
+        {Array.isArray(aircrafts) && aircrafts.map((aircraft) => (
+          <React.Fragment key={aircraft.simobjectid}>
+            <AircraftMarker
+              id={aircraft.callsign || aircraft.simobjectid}
+              value={aircraft}
+              transmitting={transmitting}
+              dark={dark}
+              detailsVisible={detailsVisible}
+              cdmData={cdmData.find((x) => x.callsign === (aircraft.callsign || aircraft.simobjectid))}
+            />
+          </React.Fragment>
         ))}
       </Canvas>
       <div className="absolute top-0 right-0 flex-col items-end hidden p-4 mx-auto text-sm group-hover:flex bg-opacity-80">
@@ -477,6 +633,18 @@ export default function TowerViewThree({
           >
             Toggle Guides
           </button>
+              <button
+                onClick={() => setCalibrationMode((prev) => !prev)}
+                className="px-1 text-white rounded-md bg-primary"
+              >
+                {calibrationMode ? "Exit Calibration" : "Calibrate Camera"}
+              </button>
+              <button
+                onClick={() => setBgIndex((prev) => (prev + 1) % backgroundColors.length)}
+                className="px-1 text-white rounded-md bg-primary"
+              >
+                Toggle Background
+              </button>
           <button
             onClick={() => setDark((prev) => !prev)}
             className="px-1 text-white rounded-md bg-primary"
@@ -520,11 +688,13 @@ export default function TowerViewThree({
             }}
           >
             <p>
-              Lon:{" "}
+                  Lon: {" "}
               <input
-                value={cameraState.lon.toFixed(6)}
+                    value={lonInput !== undefined ? lonInput : cameraState.lon.toFixed(6)}
                 type="number"
+                    step="0.005"
                 onChange={(e) => {
+                      setLonInput(e.target.value);
                   if (cameraInstance) {
                     const newLon = +e.target.value;
                     const currentWgs = toWgs84([
@@ -535,6 +705,7 @@ export default function TowerViewThree({
                     cameraInstance.position.x = -(converted[0] - offset[0]);
                   }
                 }}
+                    onBlur={() => setLonInput(undefined)}
                 className="w-24"
                 style={{
                   textShadow:
@@ -543,11 +714,13 @@ export default function TowerViewThree({
               />
             </p>
             <p>
-              Lat:{" "}
+                  Lat: {" "}
               <input
-                value={cameraState.lat.toFixed(6)}
+                    value={latInput !== undefined ? latInput : cameraState.lat.toFixed(6)}
                 type="number"
+                    step="0.005"
                 onChange={(e) => {
+                      setLatInput(e.target.value);
                   if (cameraInstance) {
                     const newLat = +e.target.value;
                     const currentWgs = toWgs84([
@@ -558,6 +731,7 @@ export default function TowerViewThree({
                     cameraInstance.position.z = converted[1] - offset[1];
                   }
                 }}
+                    onBlur={() => setLatInput(undefined)}
                 className="w-24"
                 style={{
                   textShadow:
@@ -566,15 +740,18 @@ export default function TowerViewThree({
               />
             </p>
             <p>
-              Alt (m):{" "}
+                  Alt (m): {" "}
               <input
-                value={cameraState.alt.toFixed(2)}
+                    value={altInput !== undefined ? altInput : cameraState.alt.toFixed(2)}
                 type="number"
+                    step="0.5"
                 onChange={(e) => {
+                      setAltInput(e.target.value);
                   if (cameraInstance) {
                     cameraInstance.position.y = +e.target.value;
                   }
                 }}
+                    onBlur={() => setAltInput(undefined)}
                 className="w-24"
                 style={{
                   textShadow:
@@ -583,16 +760,19 @@ export default function TowerViewThree({
               />
             </p>
             <p>
-              Heading:{" "}
+                  Heading: {" "}
               <input
-                value={cameraState.heading.toFixed(2)}
+                    value={headingInput !== undefined ? headingInput : cameraState.heading.toFixed(2)}
                 type="number"
+                    step="0.5"
                 onChange={(e) => {
+                      setHeadingInput(e.target.value);
                   if (cameraInstance) {
                     cameraInstance.rotation.y =
                       -((+e.target.value + 180) * Math.PI) / 180;
                   }
                 }}
+                    onBlur={() => setHeadingInput(undefined)}
                 className="w-24"
                 style={{
                   textShadow:
@@ -601,16 +781,19 @@ export default function TowerViewThree({
               />
             </p>
             <p>
-              Pitch:{" "}
+                  Pitch: {" "}
               <input
-                value={cameraState.pitch.toFixed(2)}
+                    value={pitchInput !== undefined ? pitchInput : cameraState.pitch.toFixed(2)}
                 type="number"
+                    step="0.5"
                 onChange={(e) => {
+                      setPitchInput(e.target.value);
                   if (cameraInstance) {
                     cameraInstance.rotation.x =
                       (+e.target.value * Math.PI) / 180;
                   }
                 }}
+                    onBlur={() => setPitchInput(undefined)}
                 className="w-24"
                 style={{
                   textShadow:
@@ -619,16 +802,19 @@ export default function TowerViewThree({
               />
             </p>
             <p>
-              Roll:{" "}
+                  Roll: {" "}
               <input
-                value={cameraState.roll.toFixed(2)}
+                    value={rollInput !== undefined ? rollInput : cameraState.roll.toFixed(2)}
                 type="number"
+                    step="0.5"
                 onChange={(e) => {
+                      setRollInput(e.target.value);
                   if (cameraInstance) {
                     cameraInstance.rotation.z =
                       (+e.target.value * Math.PI) / 180;
                   }
                 }}
+                    onBlur={() => setRollInput(undefined)}
                 className="w-24"
                 style={{
                   textShadow:
@@ -637,16 +823,19 @@ export default function TowerViewThree({
               />
             </p>
             <p>
-              FOV:{" "}
+                  FOV: {" "}
               <input
-                value={cameraState.fov.toFixed(2)}
+                    value={fovInput !== undefined ? fovInput : cameraState.fov.toFixed(2)}
                 type="number"
+                    step="0.1"
                 onChange={(e) => {
+                      setFovInput(e.target.value);
                   if (cameraInstance) {
                     cameraInstance.fov = +e.target.value;
                     cameraInstance.updateProjectionMatrix();
                   }
                 }}
+                    onBlur={() => setFovInput(undefined)}
                 className="w-24"
                 style={{
                   textShadow:
@@ -656,6 +845,292 @@ export default function TowerViewThree({
             </p>
           </div>
         )}
+      </div>
+        </div>
+      </div>
+      {/* Upload screenshot button (always visible in calibration mode) */}
+      {calibrationMode && (
+        <div
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            zIndex: 1002,
+            pointerEvents: "auto",
+            display: 'flex',
+            flexDirection: 'column',
+            alignItems: 'flex-end',
+            gap: 12,
+          }}
+        >
+          {/* Show Calculate button if at least 4 confirmed points */}
+          {showCalculate && (
+            <button
+              style={{
+                background: '#0af',
+                color: 'white',
+                padding: '12px 24px',
+                borderRadius: 8,
+                fontSize: 18,
+                boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
+                marginBottom: 8,
+              }}
+              onClick={() => {
+                // ... calculation logic ...
+                // Example result (replace with actual calculation):
+                const result = {
+                  lon: 114.2,
+                  lat: 22.3,
+                  alt: 50,
+                  heading: 90,
+                  pitch: 0,
+                  roll: 0,
+                  fov: 60,
+                };
+                setCalculationResult(result);
+              }}
+            >
+              Calculate
+            </button>
+          )}
+          <label style={{ cursor: "pointer" }}>
+            <input
+              type="file"
+              accept="image/*"
+              style={{ display: "none" }}
+              onChange={e => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onload = (ev) => {
+                    setCalibrationImage(ev.target?.result as string);
+                  };
+                  reader.readAsDataURL(file);
+                }
+              }}
+            />
+            <span
+              style={{
+                background: "#222",
+                color: "#fff",
+                padding: "12px 24px",
+                borderRadius: 8,
+                fontSize: 18,
+                boxShadow: "0 2px 8px rgba(0,0,0,0.3)",
+                display: "inline-block",
+              }}
+            >
+              Upload Screenshot
+            </span>
+          </label>
+        </div>
+      )}
+      {/* Render calibration markers */}
+      {calibrationMode && calibrationPoints.map((pt, idx) => {
+        const isActive = activePointIdx === idx;
+        const isValid = isPointValid(pt);
+        return (
+          <div
+            key={idx}
+            style={{
+              position: "absolute",
+              left: pt.x - 8,
+              top: pt.y - 8,
+              width: 16,
+              height: 16,
+              background: isActive ? "red" : (isValid ? "#0f0" : "#00f"),
+              borderRadius: "50%",
+              border: "2px solid white",
+              zIndex: 1001,
+              pointerEvents: "auto",
+              cursor: "pointer",
+            }}
+            onClick={e => {
+              e.stopPropagation();
+              if (activePointIdx !== null && activePointIdx !== idx) {
+                const activePt = calibrationPoints[activePointIdx];
+                if (!isPointValid(activePt)) {
+                  setCalibrationPoints(points => points.filter((_, i) => i !== activePointIdx));
+                  setActivePointIdx(i => {
+                    if (activePointIdx < idx) return idx - 1;
+                    return idx;
+                  });
+                  return;
+                }
+              }
+              setActivePointIdx(idx);
+            }}
+          />
+        );
+      })}
+      {/* Overlay for active point coordinate input */}
+      {calibrationMode && activePointIdx !== null && calibrationPoints[activePointIdx] && (
+        <div
+          style={{
+            position: "absolute",
+            left: calibrationPoints[activePointIdx].x + 20,
+            top: calibrationPoints[activePointIdx].y - 20,
+            background: "rgba(0,0,0,0.85)",
+            color: "white",
+            padding: 12,
+            borderRadius: 8,
+            zIndex: 1100,
+            minWidth: 180,
+          }}
+          onClick={e => e.stopPropagation()}
+        >
+          {/* Display x/y pixel coordinates */}
+          <div style={{ marginBottom: 8, fontSize: 14, color: '#0af' }}>
+            <strong>Screen X:</strong> {Math.round(calibrationPoints[activePointIdx].x)}, <strong>Y:</strong> {Math.round(calibrationPoints[activePointIdx].y)}
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <label>Lat: </label>
+            <input
+              type="text"
+              value={calibrationPoints[activePointIdx].lat}
+              onChange={e => setCalibrationPoints(points => points.map((pt, idx) =>
+                idx === activePointIdx ? { ...pt, lat: e.target.value } : pt
+              ))}
+              style={{ width: 100, marginLeft: 4 }}
+            />
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <label>Lon: </label>
+            <input
+              type="text"
+              value={calibrationPoints[activePointIdx].lon}
+              onChange={e => setCalibrationPoints(points => points.map((pt, idx) =>
+                idx === activePointIdx ? { ...pt, lon: e.target.value } : pt
+              ))}
+              style={{ width: 100, marginLeft: 4 }}
+            />
+          </div>
+          <div style={{ marginBottom: 8 }}>
+            <label>Alt: </label>
+            <input
+              type="text"
+              value={calibrationPoints[activePointIdx].alt}
+              onChange={e => setCalibrationPoints(points => points.map((pt, idx) =>
+                idx === activePointIdx ? { ...pt, alt: e.target.value } : pt
+              ))}
+              style={{ width: 100, marginLeft: 4 }}
+            />
+          </div>
+          {/* Validation: all fields must be valid numbers */}
+          {(() => {
+            const pt = calibrationPoints[activePointIdx];
+            const valid = pt && !isNaN(Number(pt.lat)) && !isNaN(Number(pt.lon)) && !isNaN(Number(pt.alt)) && pt.lat !== '' && pt.lon !== '' && pt.alt !== '';
+            return (
+              <button
+                style={{ marginRight: 8, background: '#0a0', color: 'white', padding: '4px 12px', borderRadius: 4, opacity: valid ? 1 : 0.5 }}
+                onClick={() => { if (valid) setActivePointIdx(null); }}
+                disabled={!valid}
+              >
+                Confirm
+              </button>
+            );
+          })()}
+          <button
+            style={{ background: '#a00', color: 'white', padding: '4px 12px', borderRadius: 4 }}
+            onClick={() => {
+              setCalibrationPoints(points => points.filter((_, idx) => idx !== activePointIdx));
+              setActivePointIdx(null);
+            }}
+          >
+            Delete
+          </button>
+        </div>
+      )}
+      {/* Result overlay */}
+      {calculationResult && (
+        <div
+          style={{
+            position: 'fixed',
+            top: 0,
+            left: 0,
+            width: '100vw',
+            height: '100vh',
+            background: 'rgba(0,0,0,0.7)',
+            zIndex: 2000,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+          }}
+        >
+          <div style={{ background: '#222', color: '#fff', padding: 32, borderRadius: 12, minWidth: 340, boxShadow: '0 4px 24px #0008' }}>
+            <h2 style={{ fontSize: 22, marginBottom: 16 }}>Calibration Result</h2>
+            <div style={{ marginBottom: 16 }}>
+              <div>Lon: <b>{calculationResult.lon.toFixed(6)}</b></div>
+              <div>Lat: <b>{calculationResult.lat.toFixed(6)}</b></div>
+              <div>Alt: <b>{calculationResult.alt.toFixed(2)}</b></div>
+              <div>Heading: <b>{calculationResult.heading.toFixed(2)}</b></div>
+              <div>Pitch: <b>{calculationResult.pitch.toFixed(2)}</b></div>
+              <div>Roll: <b>{calculationResult.roll.toFixed(2)}</b></div>
+              <div>FOV: <b>{calculationResult.fov.toFixed(2)}</b></div>
+            </div>
+            <div style={{ display: 'flex', gap: 16, justifyContent: 'flex-end' }}>
+              <button
+                style={{ background: '#a00', color: 'white', padding: '8px 24px', borderRadius: 6, fontSize: 16 }}
+                onClick={() => setCalculationResult(null)}
+              >
+                Cancel
+              </button>
+              <button
+                style={{ background: '#0af', color: 'white', padding: '8px 24px', borderRadius: 6, fontSize: 16 }}
+                onClick={() => {
+                  // Apply the result to the camera POV values
+                  if (cameraInstance) {
+                    // Set position
+                    const merc = toMercator([calculationResult.lon, calculationResult.lat]);
+                    cameraInstance.position.x = -(merc[0] - offset[0]);
+                    cameraInstance.position.z = merc[1] - offset[1];
+                    cameraInstance.position.y = calculationResult.alt;
+                    // Set rotation
+                    cameraInstance.rotation.x = (calculationResult.pitch * Math.PI) / 180;
+                    cameraInstance.rotation.y = -((calculationResult.heading + 180) * Math.PI) / 180;
+                    cameraInstance.rotation.z = (calculationResult.roll * Math.PI) / 180;
+                    // Set FOV
+                    cameraInstance.fov = calculationResult.fov;
+                    cameraInstance.updateProjectionMatrix();
+                  }
+                  setCalculationResult(null);
+                }}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+      {/* Refresh Rate Controls (show on hover) */}
+      <div className="absolute top-0 left-0 p-4 group-hover:block hidden z-20" style={{ background: 'rgba(0,0,0,0.5)', borderRadius: 8 }}>
+        <label className="text-white text-xs" style={{ marginRight: 8 }}>
+          Refresh Rate (Hz):
+        </label>
+        <input
+          type="number"
+          min={minHz}
+          max={maxHz}
+          step={0.1}
+          value={refreshRate}
+          onChange={e => {
+            let v = parseFloat(e.target.value);
+            if (isNaN(v)) v = minHz;
+            v = Math.max(minHz, Math.min(maxHz, v));
+            setRefreshRate(v);
+          }}
+          className="w-16 px-1 text-sm text-white rounded-md bg-primary border border-white"
+          style={{ marginRight: 8 }}
+        />
+        <input
+          type="range"
+          min={minHz}
+          max={maxHz}
+          step={0.1}
+          value={refreshRate}
+          onChange={e => setRefreshRate(parseFloat(e.target.value))}
+          style={{ width: 120, verticalAlign: 'middle' }}
+        />
       </div>
     </>
   );

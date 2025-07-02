@@ -10,6 +10,13 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 - Exposes the full aircraft JSON map via a WebSocket server on `localhost`.
 
 ## Version History
+0.4
+- Added logging of position history for the past 60s to correlate with Vatsim due to vatsim update frequency, using lateral and vertical distance factors, giving better accuracy.
+- Removed recorrelation logic.
+
+0.3
+- Added Typesrcript (Node.js) frontend
+
 0.2.1
 - Added 'heading', 'transponder', 'transponder_asgn', and 'deptime' fields for aircraft JSON object.
 - Removed 'registration' from the JSON output.
@@ -96,3 +103,77 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 
 ## License
 - See main project license. SimConnect SDK is subject to Microsoft EULA. 
+
+## Running the TypeScript/React Frontend Locally
+
+To run and test the web frontend (TypeScript/React) locally:
+
+1. **Install Dependencies**
+
+   Open a terminal in the project root (where your `package.json` is) and run:
+   ```sh
+   npm install
+   ```
+   This will install all dependencies listed in `package.json`.
+
+   If you do not have a `package.json`, you can create one and install the necessary packages for a React + TypeScript project:
+   ```sh
+   npm init -y
+   npm install react react-dom
+   npm install --save-dev typescript @types/react @types/react-dom
+   ```
+   If you are using Next.js (recommended for this project):
+   ```sh
+   npm install next
+   npm install --save-dev typescript @types/react @types/node
+   ```
+
+2. **Check/Initialize TypeScript**
+
+   If you don't have a `tsconfig.json`, create one:
+   ```sh
+   npx tsc --init
+   ```
+   Or, if using Next.js, just run `npm run dev` once and it will create a default `tsconfig.json` for you.
+
+3. **Start the Development Server**
+
+   - For Next.js:
+     ```sh
+     npm run dev
+     ```
+     (If you don't have a `package.json` with scripts, add this to your `package.json` under "scripts":)
+     ```json
+     "scripts": {
+       "dev": "next dev"
+     }
+     ```
+
+   - For Create React App:
+     ```sh
+     npm start
+     ```
+     (If you don't have a `package.json` with scripts, add this:)
+     ```json
+     "scripts": {
+       "start": "react-scripts start"
+     }
+     ```
+
+4. **Open in Browser**
+
+   Once the server is running, open your browser and go to:
+   ```
+   http://localhost:3000
+   ```
+   (or whatever port your dev server reports).
+
+5. **Troubleshooting**
+
+   - If you see errors about missing modules, install them with `npm install <module-name>`.
+   - If you see TypeScript errors about missing types, install them with `npm install --save-dev @types/<module-name>`.
+
+**Summary:**
+- Run `npm install`
+- Run `npm run dev` (for Next.js) or `npm start` (for Create React App)
+- Open your browser to `http://localhost:3000`
