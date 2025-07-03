@@ -97,14 +97,15 @@ function CameraControls() {
       isDragging.current = false;
     };
     const onWheel = (e: WheelEvent) => {
+      const perspCam = camera as PerspectiveCamera;
       if (e.deltaY < 0) {
         // Scroll up: zoom in (decrease FOV)
-        camera.fov = Math.max(10, camera.fov - 1.0);
-        camera.updateProjectionMatrix();
+        perspCam.fov = Math.max(10, perspCam.fov - 1.0);
+        perspCam.updateProjectionMatrix();
       } else if (e.deltaY > 0) {
         // Scroll down: zoom out (increase FOV)
-        camera.fov = Math.min(120, camera.fov + 1.0);
-        camera.updateProjectionMatrix();
+        perspCam.fov = Math.min(120, perspCam.fov + 1.0);
+        perspCam.updateProjectionMatrix();
       }
     };
 
@@ -196,6 +197,7 @@ function AircraftMarker({
   dark,
   detailsVisible,
   cdmData,
+  tagDistance,
 }: Readonly<{
   id: string;
   value: any;
@@ -203,6 +205,7 @@ function AircraftMarker({
   dark: boolean;
   detailsVisible: boolean;
   cdmData?: CDMData;
+  tagDistance: number;
 }>) {
   // Convert lon/lat to mercator and then adjust for global offset.
   const m = toMercator([value.longitude, value.latitude]);
@@ -216,7 +219,7 @@ function AircraftMarker({
   const dx = position[0] - camera.position.x;
   const dz = position[2] - camera.position.z;
   const distance = Math.sqrt(dx * dx + dz * dz);
-  if (distance > 5000) return null; // Hide markers further than 5km.
+  if (distance > tagDistance) return null; // Hide markers further than tagDistance.
 
   const gate =
     (value.dep === "VHHH" || value.arr === "VHHH") &&
@@ -434,10 +437,12 @@ export default function TowerViewThree({
   const [lonInput, setLonInput] = useState<string | undefined>(undefined);
   const [latInput, setLatInput] = useState<string | undefined>(undefined);
   const [altInput, setAltInput] = useState<string | undefined>(undefined);
+  const [altMSFSInput, setAltMSFSInput] = useState<string | undefined>(undefined);
   const [headingInput, setHeadingInput] = useState<string | undefined>(undefined);
   const [pitchInput, setPitchInput] = useState<string | undefined>(undefined);
   const [rollInput, setRollInput] = useState<string | undefined>(undefined);
   const [fovInput, setFovInput] = useState<string | undefined>(undefined);
+  const [fovRadInput, setFovRadInput] = useState<string | undefined>(undefined);
 
   // Three.js camera expects fov in degrees.
 
@@ -463,30 +468,29 @@ export default function TowerViewThree({
 
   // Helper for validation
   const isPointValid = (pt: { lat: string; lon: string; alt: string }) =>
-    pt.lat !== '' && pt.lon !== '' && pt.alt !== '' &&
-    !isNaN(Number(pt.lat)) && !isNaN(Number(pt.lon)) && !isNaN(Number(pt.alt));
+    pt.lat !== '' && pt.lon !== '' &&
+    !isNaN(Number(pt.lat)) && !isNaN(Number(pt.lon));
 
   const confirmedPointsCount = calibrationPoints.filter(isPointValid).length;
 
-  // Show Calculate button if at least 4 points and the 4th (most recent) is valid
-  const showCalculate = calibrationPoints.length >= 4 && isPointValid(calibrationPoints[3]);
+  // Show Calculate button if at least 2 points and the 2nd (most recent) is valid
+  const showCalculate = calibrationPoints.length >= 2 && isPointValid(calibrationPoints[1]);
 
   // Add at the top of the component (after other useState):
   const [calculationResult, setCalculationResult] = useState<null | {
-    lon: number;
-    lat: number;
-    alt: number;
     heading: number;
     pitch: number;
     roll: number;
-    fov: number;
   }>(null);
 
-  // Aircraft polling and refresh rate state
-  const [aircrafts, setAircrafts] = useState<any[]>([]);
+  // Add refreshRate state and aircraft fetching logic here
   const [refreshRate, setRefreshRate] = useState(10); // Hz, default 10
-  const minHz = 10;
-  const maxHz = 30;
+  const minHz = 1;
+  const maxHz = 10;
+  const [aircrafts, setAircrafts] = useState<any[]>([]);
+
+  // Tag visibility distance state
+  const [tagDistance, setTagDistance] = useState(5000); // metres, default 5000
 
   useEffect(() => {
     let timer: any;
@@ -528,6 +532,147 @@ export default function TowerViewThree({
     return () => clearTimeout(timer);
   }, [refreshRate]);
 
+  // --- Camera orientation solver for 2 points ---
+  function solveCameraRotationFrom2Points({
+    cameraPos,
+    fov,
+    imageSize,
+    worldPoints,
+    imagePoints,
+  }: {
+    cameraPos: number[];
+    fov: number;
+    imageSize: [number, number];
+    worldPoints: number[][];
+    imagePoints: number[][];
+  }) {
+    // 1. Compute direction vectors from camera to world points
+    const dirs3D = worldPoints.map((p: number[]) => {
+      const v = [p[0] - cameraPos[0], p[1] - cameraPos[1], p[2] - cameraPos[2]];
+      const len = Math.hypot(...v);
+      return v.map((x: number) => x / len);
+    });
+    // 2. Compute direction vectors in camera/image space
+    const [width, height] = imageSize;
+    const fy = height / (2 * Math.tan((fov * Math.PI) / 360));
+    const fx = fy;
+    const cx = width / 2;
+    const cy = height / 2;
+    const dirs2D = imagePoints.map((pt: number[]) => {
+      // Convert image pixel to normalized camera direction
+      const dx = (pt[0] - cx) / fx;
+      const dy = (pt[1] - cy) / fy;
+      const dz = 1;
+      const v = [dx, dy, dz];
+      const len = Math.hypot(...v);
+      return v.map((x: number) => x / len);
+    });
+    // 3. Find rotation matrix that aligns dirs3D to dirs2D
+    const a = dirs3D[0], b = dirs3D[1];
+    const a2 = dirs2D[0], b2 = dirs2D[1];
+    
+    function cross(u: number[], v: number[]): number[] {
+      return [u[1]*v[2]-u[2]*v[1], u[2]*v[0]-u[0]*v[2], u[0]*v[1]-u[1]*v[0]];
+    }
+    function dot(u: number[], v: number[]): number { return u[0]*v[0]+u[1]*v[1]+u[2]*v[2]; }
+    function normalize(u: number[]): number[] {
+      const l = Math.hypot(...u);
+      return u.map((x: number) => x/l);
+    }
+    function matVecMul(M: number[][], v: number[]): number[] {
+      return [
+        M[0][0]*v[0]+M[0][1]*v[1]+M[0][2]*v[2],
+        M[1][0]*v[0]+M[1][1]*v[1]+M[1][2]*v[2],
+        M[2][0]*v[0]+M[2][1]*v[1]+M[2][2]*v[2],
+      ];
+    }
+    function matMul3(A: number[][], B: number[][]): number[][] {
+      return [
+        matVecMul(A, [B[0][0],B[1][0],B[2][0]]),
+        matVecMul(A, [B[0][1],B[1][1],B[2][1]]),
+        matVecMul(A, [B[0][2],B[1][2],B[2][2]]),
+      ].map((col: number[]) => [col[0],col[1],col[2]]);
+    }
+    
+    // Move these helpers outside the if blocks
+    function matAdd(A: number[][], B: number[][]): number[][] { return A.map((r, i) => r.map((v, j) => v + B[i][j])); }
+    function matScale(A: number[][], s: number): number[][] { return A.map((r) => r.map((v) => v * s)); }
+    function matMul(A: number[][], B: number[][]): number[][] {
+      return A.map((r, i) => B[0].map((_, j) => r.reduce((s, v, k) => s + v * B[k][j], 0)));
+    }
+    
+    // Find rotation that aligns a->a2 and b->b2
+    // First, rotate a to a2
+    const v1 = cross(a, a2);
+    const s1 = Math.hypot(...v1);
+    const c1 = dot(a, a2);
+    let R1;
+    if (s1 < 1e-8) {
+      R1 = [[1,0,0],[0,1,0],[0,0,1]];
+    } else {
+      // Rodrigues' rotation formula
+      const k = normalize(v1);
+      const K = [
+        [0, -k[2], k[1]],
+        [k[2], 0, -k[0]],
+        [-k[1], k[0], 0],
+      ];
+      const I = [[1,0,0],[0,1,0],[0,0,1]];
+      const K2 = matMul(K, K);
+      R1 = matAdd(matAdd(I, matScale(K, s1)), matScale(K2, (1-c1)));
+    }
+    
+    // Apply R1 to b
+    const b1 = matVecMul(R1, b);
+    
+    // Now, rotate b1 to b2 around a2
+    const v2 = cross(b1, b2);
+    const s2 = Math.hypot(...v2);
+    const c2 = dot(b1, b2);
+    let R2;
+    if (s2 < 1e-8) {
+      R2 = [[1,0,0],[0,1,0],[0,0,1]];
+    } else {
+      const k = normalize(a2);
+      const K = [
+        [0, -k[2], k[1]],
+        [k[2], 0, -k[0]],
+        [-k[1], k[0], 0],
+      ];
+      const I = [[1,0,0],[0,1,0],[0,0,1]];
+      const K2 = matMul(K, K);
+      R2 = matAdd(matAdd(I, matScale(K, s2)), matScale(K2, (1-c2)));
+    }
+    
+    // Final rotation: R = R2 * R1
+    const R = matMul3(R2, R1);
+    
+    // Convert rotation matrix to Euler angles (YXZ order: yaw, pitch, roll)
+    let pitch, yaw, roll;
+    if (R[2][0] < 1) {
+      if (R[2][0] > -1) {
+        pitch = Math.asin(-R[2][0]);
+        yaw = Math.atan2(R[2][1], R[2][2]);
+        roll = Math.atan2(R[1][0], R[0][0]);
+      } else {
+        // R[2][0] == -1
+        pitch = Math.PI/2;
+        yaw = -Math.atan2(-R[1][2], R[1][1]);
+        roll = 0;
+      }
+    } else {
+      // R[2][0] == 1
+      pitch = -Math.PI/2;
+      yaw = Math.atan2(-R[1][2], R[1][1]);
+      roll = 0;
+    }
+    return {
+      pitch: pitch * 180 / Math.PI,
+      yaw: yaw * 180 / Math.PI,
+      roll: roll * 180 / Math.PI,
+    };
+  }
+
   return (
     <>
       {/* Calibration overlay (lowest layer, not blocking UI) */}
@@ -555,6 +700,8 @@ export default function TowerViewThree({
           backgroundRepeat: 'no-repeat',
         } : {}}
         onClick={calibrationMode ? (e) => {
+          // Only block adding a new point if there are 2 points and no point is active
+          if (calibrationPoints.length >= 2 && activePointIdx === null) return;
           const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
           const x = e.clientX - rect.left;
           const y = e.clientY - rect.top;
@@ -570,69 +717,123 @@ export default function TowerViewThree({
           }
         } : undefined}
       >
-        <div style={{ background: backgroundColors[bgIndex], width: "100vw", height: "100vh" }}>
-      <Canvas
-        style={{ width: "100%", height: "100%" }}
-        camera={{
-          position: [-(pos[0] - offset[0]), options.alt, pos[1] - offset[1]],
-          rotation: [
-            (options.pitch * Math.PI) / 180,
-            -((options.heading + 180) * Math.PI) / 180,
-            (options.roll * Math.PI) / 180,
-            "YXZ",
-          ],
-          fov: options.fov,
-          far: 10000,
-        }}
-        onCreated={({ camera }) => {
-          setCameraInstance(camera as PerspectiveCamera);
-        }}
-      >
-        <CameraControls />
-        <SyncCamera setCameraState={setCameraState} />
-        <ambientLight />
-        {/* Render guide lines if enabled */}
-        {guidesVisible && (
-          <>
-            {vhhh.features.map((feature: any, i: number) => (
-              <React.Fragment key={i}>
-                <GuideLine feature={feature} elevation={28} />
-              </React.Fragment>
-            ))}
-            {vhhx.features.map((feature: any, i: number) => (
-              <React.Fragment key={i}>
-                <GuideLine feature={feature} elevation={30} />
-              </React.Fragment>
-            ))}
-            {vmmc.features.map((feature: any, i: number) => (
-              <React.Fragment key={i}>
-                <GuideLine feature={feature} elevation={20} />
-              </React.Fragment>
-            ))}
-          </>
-        )}
-        {/* Render each aircraft marker */}
-        {Array.isArray(aircrafts) && aircrafts.map((aircraft) => (
-          <React.Fragment key={aircraft.simobjectid}>
-            <AircraftMarker
-              id={aircraft.callsign || aircraft.simobjectid}
-              value={aircraft}
-              transmitting={transmitting}
-              dark={dark}
-              detailsVisible={detailsVisible}
-              cdmData={cdmData.find((x) => x.callsign === (aircraft.callsign || aircraft.simobjectid))}
+        {/* Refresh Rate Controls (show on hover) */}
+        <div className="absolute top-0 left-0 p-4 group-hover:block hidden z-20" style={{ background: 'rgba(0,0,0,0.5)', borderRadius: 8 }}>
+          <label className="text-white text-xs" style={{ marginRight: 8 }}>
+            Refresh Rate (Hz):
+          </label>
+          <input
+            type="number"
+            min={minHz}
+            max={maxHz}
+            step={1}
+            value={refreshRate}
+            onChange={e => {
+              let v = Math.round(Number(e.target.value));
+              if (isNaN(v)) v = minHz;
+              v = Math.max(minHz, Math.min(maxHz, v));
+              setRefreshRate(v);
+            }}
+            className="w-16 px-1 text-sm text-white rounded-md bg-primary border border-white"
+            style={{ marginRight: 8 }}
+          />
+          <input
+            type="range"
+            min={minHz}
+            max={maxHz}
+            step={1}
+            value={refreshRate}
+            onChange={e => setRefreshRate(Math.round(Number(e.target.value)))}
+            style={{ width: 120, verticalAlign: 'middle' }}
+          />
+          {/* Tag Distance Slider */}
+          <div style={{ marginTop: 16 }}>
+            <label className="text-white text-xs" style={{ marginRight: 8 }}>
+              Tag Visible Distance (m):
+            </label>
+            <input
+              type="number"
+              min={1000}
+              max={180000}
+              step={100}
+              value={tagDistance}
+              onChange={e => {
+                let v = Math.round(Number(e.target.value));
+                if (isNaN(v)) v = 1000;
+                v = Math.max(1000, Math.min(180000, v));
+                setTagDistance(v);
+              }}
+              className="w-24 px-1 text-sm text-white rounded-md bg-primary border border-white"
+              style={{ marginRight: 8 }}
             />
-          </React.Fragment>
-        ))}
-      </Canvas>
-      <div className="absolute top-0 right-0 flex-col items-end hidden p-4 mx-auto text-sm group-hover:flex bg-opacity-80">
-        <div className="flex flex-wrap gap-1">
-          <button
-            onClick={() => setGuidesVisible((prev) => !prev)}
-            className="px-1 text-white rounded-md bg-primary"
+            <input
+              type="range"
+              min={1000}
+              max={180000}
+              step={100}
+              value={tagDistance}
+              onChange={e => setTagDistance(Math.round(Number(e.target.value)))}
+              style={{ width: 180, verticalAlign: 'middle' }}
+            />
+          </div>
+        </div>
+        <div style={{ background: backgroundColors[bgIndex], width: "100vw", height: "100vh" }}>
+          <Canvas
+            style={{ width: "100%", height: "100%" }}
+            camera={{
+              position: [-(pos[0] - offset[0]), options.alt, pos[1] - offset[1]],
+              rotation: [
+                (options.pitch * Math.PI) / 180,
+                -((options.heading + 180) * Math.PI) / 180,
+                (options.roll * Math.PI) / 180,
+                "YXZ",
+              ],
+              fov: options.fov,
+              far: 10000,
+            }}
+            onCreated={({ camera }) => {
+              setCameraInstance(camera as PerspectiveCamera);
+            }}
           >
-            Toggle Guides
-          </button>
+            <CameraControls />
+            <SyncCamera setCameraState={setCameraState} />
+            <ambientLight />
+            {/* Render guide lines if enabled */}
+            {guidesVisible && (
+              <>
+                {vhhh.features.map((feature: any, i: number) => (
+                  <GuideLine key={i} feature={feature} elevation={28} />
+                ))}
+                {vhhx.features.map((feature: any, i: number) => (
+                  <GuideLine key={i} feature={feature} elevation={30} />
+                ))}
+                {vmmc.features.map((feature: any, i: number) => (
+                  <GuideLine key={i} feature={feature} elevation={20} />
+                ))}
+              </>
+            )}
+            {/* Render each aircraft marker */}
+            {Array.isArray(aircrafts) && aircrafts.map((aircraft) => (
+              <AircraftMarker
+                key={aircraft.simobjectid}
+                id={aircraft.callsign || aircraft.simobjectid}
+                value={aircraft}
+                transmitting={transmitting}
+                dark={dark}
+                detailsVisible={detailsVisible}
+                cdmData={cdmData.find((x) => x.callsign === (aircraft.callsign || aircraft.simobjectid))}
+                tagDistance={tagDistance}
+              />
+            ))}
+          </Canvas>
+          <div className="absolute top-0 right-0 flex-col items-end hidden p-4 mx-auto text-sm group-hover:flex bg-opacity-80">
+            <div className="flex flex-wrap gap-1">
+              <button
+                onClick={() => setGuidesVisible((prev) => !prev)}
+                className="px-1 text-white rounded-md bg-primary"
+              >
+                Toggle Guides
+              </button>
               <button
                 onClick={() => setCalibrationMode((prev) => !prev)}
                 className="px-1 text-white rounded-md bg-primary"
@@ -645,207 +846,254 @@ export default function TowerViewThree({
               >
                 Toggle Background
               </button>
-          <button
-            onClick={() => setDark((prev) => !prev)}
-            className="px-1 text-white rounded-md bg-primary"
-          >
-            {dark ? <Moon width={"1rem"} /> : <Sun width={"1rem"} />}
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-1 mt-1">
-          <button
-            onClick={() => setDetailsVisible((prev) => !prev)}
-            className="px-1 text-white rounded-md bg-primary"
-          >
-            Toggle Details
-          </button>
-          {cameraInstance && cameraState && (
-            <CopyButton
-              className="px-1 py-0 text-white rounded-md bg-primary"
-              displayText="Copy Params"
-              value={new URLSearchParams({
-                lon: cameraState.lon.toFixed(6),
-                lat: cameraState.lat.toFixed(6),
-                alt: cameraState.alt.toFixed(2),
-                heading: cameraState.heading.toFixed(2),
-                pitch: cameraState.pitch.toFixed(2),
-                roll: cameraState.roll.toFixed(2),
-                fov: cameraState.fov.toFixed(2),
-                ...(dark && { dark: "" }),
-                ...(guidesVisible && { guides: "" }),
-              }).toString()}
-            >
-              <Clipboard width={"1rem"} />
-            </CopyButton>
-          )}
-        </div>
-        {cameraInstance && cameraState && (
-          <div
-            className="mt-2 text-right text-white"
-            style={{
-              textShadow:
-                "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
-            }}
-          >
-            <p>
+              <button
+                onClick={() => setDark((prev) => !prev)}
+                className="px-1 text-white rounded-md bg-primary"
+              >
+                {dark ? <Moon width={"1rem"} /> : <Sun width={"1rem"} />}
+              </button>
+            </div>
+            <div className="flex flex-wrap gap-1 mt-1">
+              <button
+                onClick={() => setDetailsVisible((prev) => !prev)}
+                className="px-1 text-white rounded-md bg-primary"
+              >
+                Toggle Details
+              </button>
+              {cameraInstance && cameraState && (
+                <CopyButton
+                  className="px-1 py-0 text-white rounded-md bg-primary"
+                  displayText="Copy Params"
+                  value={new URLSearchParams({
+                    lon: cameraState.lon.toFixed(6),
+                    lat: cameraState.lat.toFixed(6),
+                    alt: cameraState.alt.toFixed(2),
+                    heading: cameraState.heading.toFixed(2),
+                    pitch: cameraState.pitch.toFixed(2),
+                    roll: cameraState.roll.toFixed(2),
+                    fov: cameraState.fov.toFixed(2),
+                    ...(dark && { dark: "" }),
+                    ...(guidesVisible && { guides: "" }),
+                  }).toString()}
+                >
+                  <Clipboard width={"1rem"} />
+                </CopyButton>
+              )}
+            </div>
+            {cameraInstance && cameraState && (
+              <div
+                className="mt-2 text-right text-white"
+                style={{
+                  textShadow:
+                    "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                }}
+              >
+                <p>
                   Lon: {" "}
-              <input
+                  <input
                     value={lonInput !== undefined ? lonInput : cameraState.lon.toFixed(6)}
-                type="number"
+                    type="number"
                     step="0.005"
-                onChange={(e) => {
+                    onChange={(e) => {
                       setLonInput(e.target.value);
-                  if (cameraInstance) {
-                    const newLon = +e.target.value;
-                    const currentWgs = toWgs84([
-                      cameraInstance.position.x + offset[0],
-                      cameraInstance.position.z + offset[1],
-                    ]);
-                    const converted = toMercator([newLon, currentWgs[1]]);
-                    cameraInstance.position.x = -(converted[0] - offset[0]);
-                  }
-                }}
+                      if (cameraInstance) {
+                        const newLon = +e.target.value;
+                        const currentWgs = toWgs84([
+                          cameraInstance.position.x + offset[0],
+                          cameraInstance.position.z + offset[1],
+                        ]);
+                        const converted = toMercator([newLon, currentWgs[1]]);
+                        cameraInstance.position.x = -(converted[0] - offset[0]);
+                      }
+                    }}
                     onBlur={() => setLonInput(undefined)}
-                className="w-24"
-                style={{
-                  textShadow:
-                    "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
-                }}
-              />
-            </p>
-            <p>
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+                <p>
                   Lat: {" "}
-              <input
+                  <input
                     value={latInput !== undefined ? latInput : cameraState.lat.toFixed(6)}
-                type="number"
+                    type="number"
                     step="0.005"
-                onChange={(e) => {
+                    onChange={(e) => {
                       setLatInput(e.target.value);
-                  if (cameraInstance) {
-                    const newLat = +e.target.value;
-                    const currentWgs = toWgs84([
-                      cameraInstance.position.x + offset[0],
-                      cameraInstance.position.z + offset[1],
-                    ]);
-                    const converted = toMercator([currentWgs[0], newLat]);
-                    cameraInstance.position.z = converted[1] - offset[1];
-                  }
-                }}
+                      if (cameraInstance) {
+                        const newLat = +e.target.value;
+                        const currentWgs = toWgs84([
+                          cameraInstance.position.x + offset[0],
+                          cameraInstance.position.z + offset[1],
+                        ]);
+                        const converted = toMercator([currentWgs[0], newLat]);
+                        cameraInstance.position.z = converted[1] - offset[1];
+                      }
+                    }}
                     onBlur={() => setLatInput(undefined)}
-                className="w-24"
-                style={{
-                  textShadow:
-                    "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
-                }}
-              />
-            </p>
-            <p>
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+                <p>
                   Alt (m): {" "}
-              <input
+                  <input
                     value={altInput !== undefined ? altInput : cameraState.alt.toFixed(2)}
-                type="number"
+                    type="number"
                     step="0.5"
-                onChange={(e) => {
+                    onChange={(e) => {
                       setAltInput(e.target.value);
-                  if (cameraInstance) {
-                    cameraInstance.position.y = +e.target.value;
-                  }
-                }}
+                      setAltMSFSInput((+e.target.value / 1.088).toFixed(2));
+                      if (cameraInstance) {
+                        cameraInstance.position.y = +e.target.value;
+                      }
+                    }}
                     onBlur={() => setAltInput(undefined)}
-                className="w-24"
-                style={{
-                  textShadow:
-                    "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
-                }}
-              />
-            </p>
-            <p>
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+                <p>
+                  Alt (MSFS, m): {" "}
+                  <input
+                    value={altMSFSInput !== undefined ? altMSFSInput : (cameraState.alt * 3.28084).toFixed(2)}
+                    type="number"
+                    step="1"
+                    onChange={(e) => {
+                      setAltMSFSInput(e.target.value);
+                      const meters = (+e.target.value * 1.088).toFixed(2);
+                      setAltInput(meters);
+                      if (cameraInstance) {
+                        cameraInstance.position.y = +meters;
+                      }
+                    }}
+                    onBlur={() => setAltMSFSInput(undefined)}
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+                <p>
                   Heading: {" "}
-              <input
+                  <input
                     value={headingInput !== undefined ? headingInput : cameraState.heading.toFixed(2)}
-                type="number"
+                    type="number"
                     step="0.5"
-                onChange={(e) => {
+                    onChange={(e) => {
                       setHeadingInput(e.target.value);
-                  if (cameraInstance) {
-                    cameraInstance.rotation.y =
-                      -((+e.target.value + 180) * Math.PI) / 180;
-                  }
-                }}
+                      if (cameraInstance) {
+                        cameraInstance.rotation.y =
+                          -((+e.target.value + 180) * Math.PI) / 180;
+                      }
+                    }}
                     onBlur={() => setHeadingInput(undefined)}
-                className="w-24"
-                style={{
-                  textShadow:
-                    "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
-                }}
-              />
-            </p>
-            <p>
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+                <p>
                   Pitch: {" "}
-              <input
+                  <input
                     value={pitchInput !== undefined ? pitchInput : cameraState.pitch.toFixed(2)}
-                type="number"
+                    type="number"
                     step="0.5"
-                onChange={(e) => {
+                    onChange={(e) => {
                       setPitchInput(e.target.value);
-                  if (cameraInstance) {
-                    cameraInstance.rotation.x =
-                      (+e.target.value * Math.PI) / 180;
-                  }
-                }}
+                      if (cameraInstance) {
+                        cameraInstance.rotation.x =
+                          (+e.target.value * Math.PI) / 180;
+                      }
+                    }}
                     onBlur={() => setPitchInput(undefined)}
-                className="w-24"
-                style={{
-                  textShadow:
-                    "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
-                }}
-              />
-            </p>
-            <p>
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+                <p>
                   Roll: {" "}
-              <input
+                  <input
                     value={rollInput !== undefined ? rollInput : cameraState.roll.toFixed(2)}
-                type="number"
+                    type="number"
                     step="0.5"
-                onChange={(e) => {
+                    onChange={(e) => {
                       setRollInput(e.target.value);
-                  if (cameraInstance) {
-                    cameraInstance.rotation.z =
-                      (+e.target.value * Math.PI) / 180;
-                  }
-                }}
+                      if (cameraInstance) {
+                        cameraInstance.rotation.z =
+                          (+e.target.value * Math.PI) / 180;
+                      }
+                    }}
                     onBlur={() => setRollInput(undefined)}
-                className="w-24"
-                style={{
-                  textShadow:
-                    "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
-                }}
-              />
-            </p>
-            <p>
-                  FOV: {" "}
-              <input
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+                <p>
+                  FOV (deg): {" "}
+                  <input
                     value={fovInput !== undefined ? fovInput : cameraState.fov.toFixed(2)}
-                type="number"
+                    type="number"
                     step="0.1"
-                onChange={(e) => {
+                    onChange={(e) => {
                       setFovInput(e.target.value);
-                  if (cameraInstance) {
-                    cameraInstance.fov = +e.target.value;
-                    cameraInstance.updateProjectionMatrix();
-                  }
-                }}
+                      setFovRadInput((+e.target.value * Math.PI / 180).toFixed(4));
+                      if (cameraInstance) {
+                        cameraInstance.fov = +e.target.value;
+                        cameraInstance.updateProjectionMatrix();
+                      }
+                    }}
                     onBlur={() => setFovInput(undefined)}
-                className="w-24"
-                style={{
-                  textShadow:
-                    "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
-                }}
-              />
-            </p>
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+                <p>
+                  FOV (rad): {" "}
+                  <input
+                    value={fovRadInput !== undefined ? fovRadInput : (cameraState.fov * Math.PI / 180).toFixed(4)}
+                    type="number"
+                    step="0.001"
+                    onChange={(e) => {
+                      setFovRadInput(e.target.value);
+                      const deg = (+e.target.value * 180 / Math.PI).toFixed(2);
+                      setFovInput(deg);
+                      if (cameraInstance) {
+                        cameraInstance.fov = +deg;
+                        cameraInstance.updateProjectionMatrix();
+                      }
+                    }}
+                    onBlur={() => setFovRadInput(undefined)}
+                    className="w-24"
+                    style={{
+                      textShadow:
+                        "-1px -1px 0 #000, 1px -1px 0 #000, -1px 1px 0 #000, 1px 1px 0 #000",
+                    }}
+                  />
+                </p>
+              </div>
+            )}
           </div>
-        )}
-      </div>
         </div>
       </div>
       {/* Upload screenshot button (always visible in calibration mode) */}
@@ -863,7 +1111,7 @@ export default function TowerViewThree({
             gap: 12,
           }}
         >
-          {/* Show Calculate button if at least 4 confirmed points */}
+          {/* Show Calculate button if at least 2 confirmed points */}
           {showCalculate && (
             <button
               style={{
@@ -875,19 +1123,44 @@ export default function TowerViewThree({
                 boxShadow: '0 2px 8px rgba(0,0,0,0.3)',
                 marginBottom: 8,
               }}
-              onClick={() => {
-                // ... calculation logic ...
-                // Example result (replace with actual calculation):
-                const result = {
-                  lon: 114.2,
-                  lat: 22.3,
-                  alt: 50,
-                  heading: 90,
-                  pitch: 0,
-                  roll: 0,
-                  fov: 60,
-                };
-                setCalculationResult(result);
+              onClick={async () => {
+                // 1. Determine elevation for current airport
+                let elevation = 8.5;
+                if (guidesVisible) {
+                  if (vhhx.features && vhhx.features.length > 0) elevation = 5.2;
+                  if (vmmc.features && vmmc.features.length > 0) elevation = 4.0;
+                }
+                // 2. Prepare 3D world points (Mercator XZ, fixed Y=elevation)
+                const worldPoints = calibrationPoints.slice(0, 2).map(pt => {
+                  const m = toMercator([parseFloat(pt.lon), parseFloat(pt.lat)]);
+                  return [-(m[0] - offset[0]), elevation, m[1] - offset[1]];
+                });
+                const imagePoints = calibrationPoints.slice(0, 2).map(pt => [pt.x, pt.y]);
+                
+                if (!cameraInstance) {
+                  alert('Camera not ready');
+                  return;
+                }
+                
+                const width = 1920;
+                const height = 1080;
+                const fov = cameraInstance.fov;
+                
+                // Use known camera position and FOV, solve for orientation
+                const camPos = [cameraInstance.position.x, cameraInstance.position.y, cameraInstance.position.z];
+                const orientation = solveCameraRotationFrom2Points({
+                  cameraPos: camPos,
+                  fov: fov,
+                  imageSize: [width, height],
+                  worldPoints,
+                  imagePoints,
+                });
+                
+                setCalculationResult({
+                  heading: orientation.yaw,
+                  pitch: orientation.pitch,
+                  roll: orientation.roll,
+                });
               }}
             >
               Calculate
@@ -1005,21 +1278,27 @@ export default function TowerViewThree({
               style={{ width: 100, marginLeft: 4 }}
             />
           </div>
+          {/* Show derived elevation in meters, read-only */}
           <div style={{ marginBottom: 8 }}>
-            <label>Alt: </label>
+            <label>Elevation (m): </label>
             <input
               type="text"
-              value={calibrationPoints[activePointIdx].alt}
-              onChange={e => setCalibrationPoints(points => points.map((pt, idx) =>
-                idx === activePointIdx ? { ...pt, alt: e.target.value } : pt
-              ))}
-              style={{ width: 100, marginLeft: 4 }}
+              value={(() => {
+                let elevation = 8.5;
+                if (guidesVisible) {
+                  if (vhhx.features && vhhx.features.length > 0) elevation = 5.2;
+                  if (vmmc.features && vmmc.features.length > 0) elevation = 4.0;
+                }
+                return elevation;
+              })()}
+              readOnly
+              style={{ width: 100, marginLeft: 4, background: '#222', color: '#fff', border: 'none' }}
             />
           </div>
           {/* Validation: all fields must be valid numbers */}
           {(() => {
             const pt = calibrationPoints[activePointIdx];
-            const valid = pt && !isNaN(Number(pt.lat)) && !isNaN(Number(pt.lon)) && !isNaN(Number(pt.alt)) && pt.lat !== '' && pt.lon !== '' && pt.alt !== '';
+            const valid = pt && !isNaN(Number(pt.lat)) && !isNaN(Number(pt.lon)) && pt.lat !== '' && pt.lon !== '';
             return (
               <button
                 style={{ marginRight: 8, background: '#0a0', color: 'white', padding: '4px 12px', borderRadius: 4, opacity: valid ? 1 : 0.5 }}
@@ -1058,15 +1337,11 @@ export default function TowerViewThree({
           }}
         >
           <div style={{ background: '#222', color: '#fff', padding: 32, borderRadius: 12, minWidth: 340, boxShadow: '0 4px 24px #0008' }}>
-            <h2 style={{ fontSize: 22, marginBottom: 16 }}>Calibration Result</h2>
+            <h2 style={{ fontSize: 22, marginBottom: 16 }}>Camera Orientation Calibration</h2>
             <div style={{ marginBottom: 16 }}>
-              <div>Lon: <b>{calculationResult.lon.toFixed(6)}</b></div>
-              <div>Lat: <b>{calculationResult.lat.toFixed(6)}</b></div>
-              <div>Alt: <b>{calculationResult.alt.toFixed(2)}</b></div>
-              <div>Heading: <b>{calculationResult.heading.toFixed(2)}</b></div>
-              <div>Pitch: <b>{calculationResult.pitch.toFixed(2)}</b></div>
-              <div>Roll: <b>{calculationResult.roll.toFixed(2)}</b></div>
-              <div>FOV: <b>{calculationResult.fov.toFixed(2)}</b></div>
+              <div>Heading: <b>{calculationResult.heading.toFixed(2)}°</b></div>
+              <div>Pitch: <b>{calculationResult.pitch.toFixed(2)}°</b></div>
+              <div>Roll: <b>{calculationResult.roll.toFixed(2)}°</b></div>
             </div>
             <div style={{ display: 'flex', gap: 16, justifyContent: 'flex-end' }}>
               <button
@@ -1078,60 +1353,27 @@ export default function TowerViewThree({
               <button
                 style={{ background: '#0af', color: 'white', padding: '8px 24px', borderRadius: 6, fontSize: 16 }}
                 onClick={() => {
-                  // Apply the result to the camera POV values
+                  // Apply only the orientation to the camera
                   if (cameraInstance) {
-                    // Set position
-                    const merc = toMercator([calculationResult.lon, calculationResult.lat]);
-                    cameraInstance.position.x = -(merc[0] - offset[0]);
-                    cameraInstance.position.z = merc[1] - offset[1];
-                    cameraInstance.position.y = calculationResult.alt;
-                    // Set rotation
                     cameraInstance.rotation.x = (calculationResult.pitch * Math.PI) / 180;
                     cameraInstance.rotation.y = -((calculationResult.heading + 180) * Math.PI) / 180;
                     cameraInstance.rotation.z = (calculationResult.roll * Math.PI) / 180;
-                    // Set FOV
-                    cameraInstance.fov = calculationResult.fov;
-                    cameraInstance.updateProjectionMatrix();
                   }
                   setCalculationResult(null);
                 }}
               >
-                OK
+                Apply Orientation
               </button>
             </div>
           </div>
         </div>
       )}
-      {/* Refresh Rate Controls (show on hover) */}
-      <div className="absolute top-0 left-0 p-4 group-hover:block hidden z-20" style={{ background: 'rgba(0,0,0,0.5)', borderRadius: 8 }}>
-        <label className="text-white text-xs" style={{ marginRight: 8 }}>
-          Refresh Rate (Hz):
-        </label>
-        <input
-          type="number"
-          min={minHz}
-          max={maxHz}
-          step={0.1}
-          value={refreshRate}
-          onChange={e => {
-            let v = parseFloat(e.target.value);
-            if (isNaN(v)) v = minHz;
-            v = Math.max(minHz, Math.min(maxHz, v));
-            setRefreshRate(v);
-          }}
-          className="w-16 px-1 text-sm text-white rounded-md bg-primary border border-white"
-          style={{ marginRight: 8 }}
-        />
-        <input
-          type="range"
-          min={minHz}
-          max={maxHz}
-          step={0.1}
-          value={refreshRate}
-          onChange={e => setRefreshRate(parseFloat(e.target.value))}
-          style={{ width: 120, verticalAlign: 'middle' }}
-        />
-      </div>
+      {/* Optionally, show a message if 2 points are already added */}
+      {calibrationMode && calibrationPoints.length >= 2 && (
+        <div style={{position:'absolute',top:16,left:16,background:'#222',color:'#fff',padding:8,borderRadius:6,zIndex:1100}}>
+          Maximum 2 points allowed for minimal calibration
+        </div>
+      )}
     </>
   );
 }

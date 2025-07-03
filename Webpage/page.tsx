@@ -24,6 +24,7 @@ export default function Page() {
 
 function TowerViewPage() {
   const rawParams = useSearchParams();
+
   return (
     <div className="relative overflow-hidden w-[1920px] h-[1080px] group">
       <TowerView
