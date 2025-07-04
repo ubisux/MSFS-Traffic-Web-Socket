@@ -5,6 +5,7 @@ import {
   vhhx,
   vmmc,
 } from "@/app/[locale]/(public)/viewer/tower/geojson";
+import { departureData } from "@/app/[locale]/(public)/viewer/tower/departurejson";
 import { useTrackAudio } from "@/lib/trackaudio";
 import { Html, Line } from "@react-three/drei";
 import { Canvas, useFrame, useThree } from "@react-three/fiber";
@@ -198,6 +199,7 @@ function AircraftMarker({
   detailsVisible,
   cdmData,
   tagDistance,
+  departureData,
 }: Readonly<{
   id: string;
   value: any;
@@ -206,6 +208,7 @@ function AircraftMarker({
   detailsVisible: boolean;
   cdmData?: CDMData;
   tagDistance: number;
+  departureData: DepartureData | null;
 }>) {
   // Convert lon/lat to mercator and then adjust for global offset.
   const m = toMercator([value.longitude, value.latitude]);
@@ -231,7 +234,7 @@ function AircraftMarker({
         const distance = Math.sqrt(dx * dx + dz * dz);
         return { gate: gate[0], distance };
       })
-      .filter((x) => x.distance < 50)
+      .filter((x) => x.distance < 80)
       .sort((a, b) => a.distance - b.distance)[0]?.gate;
 
   const content = ["VHHH", "VHHX", "VMMC"].includes(value.arr) ? (
@@ -258,10 +261,8 @@ function AircraftMarker({
         >
           {id}
         </p>
-        <p className="text-[0.625rem]">{value.registration}</p>
-        <p className="text-[0.625rem]">
-          {value.type?.replace(/^H\//, "").split("/")[0] ?? ""} {gate}
-        </p>
+        <p className="text-[0.625rem]">{value.dep} {value.registration}</p>
+        <p className="text-[0.625rem]">{value.type?.replace(/^H\//, "").split("/")[0] ?? ""} {gate}</p>
       </div>
     </div>
   ) : ["VHHH", "VHHX", "VMMC"].includes(value.dep) ? (
@@ -288,10 +289,8 @@ function AircraftMarker({
         >
           {id}
         </p>
-        <p className="text-[0.625rem]">{value.registration}</p>
-        <p className="text-[0.625rem]">
-          {value.arr} {value.depRwy}
-        </p>
+        <p className="text-[0.625rem]">{value.arr} {value.depRwy || (value.depSID && departureData ? findRunwayFromDepSID(value.depSID, departureData, value.dep) : value.depSID)} {value.registration}</p>
+        <p className="text-[0.625rem]">{value.type?.replace(/^H\//, "").split("/")[0] ?? ""} {gate}</p>
       </div>
     </div>
   ) : (
@@ -397,6 +396,37 @@ function useCDM() {
   }, []);
 
   return data;
+}
+
+// ----- Departure Data -----
+interface DepartureData {
+  departures: {
+    [airport: string]: {
+      [runway: string]: string[];
+    };
+  };
+  sidMapping: {
+    [sid: string]: {
+      airport: string;
+      runway: string;
+    };
+  };
+}
+
+// Function to find runway from depSID
+function findRunwayFromDepSID(depSID: string, departureData: DepartureData | null, departureAirport: string): string | null {
+  if (!departureData || !depSID || !departureAirport) return null;
+  
+  const sidMapping = departureData.sidMapping;
+  
+  // Check if any SID exists within the depSID string and matches the departure airport
+  for (const sid in sidMapping) {
+    if (depSID.includes(sid) && sidMapping[sid].airport === departureAirport) {
+      return sidMapping[sid].runway;
+    }
+  }
+  
+  return null; // No match found
 }
 
 // ----- Main Tower View Component -----
@@ -823,6 +853,7 @@ export default function TowerViewThree({
                 detailsVisible={detailsVisible}
                 cdmData={cdmData.find((x) => x.callsign === (aircraft.callsign || aircraft.simobjectid))}
                 tagDistance={tagDistance}
+                departureData={departureData}
               />
             ))}
           </Canvas>

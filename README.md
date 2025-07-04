@@ -10,6 +10,11 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 - Exposes the full aircraft JSON map via a WebSocket server on `localhost`.
 
 ## Version History
+0.5
+- Added ES Proxy as main callsign correlation source, falling back to VATSIM data if no ES Proxy connection.
+- Added detection of depRwy and depSID.
+- Fixed tags with Towerview frontend.
+
 0.4.1
 - Adjusted correlation logic due to on_ground status from Simconnect being inaccurate.
 - Updated Towerview (Typescript) code.
