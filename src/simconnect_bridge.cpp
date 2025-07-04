@@ -16,6 +16,7 @@
 #include "httplib.h"
 #include <unordered_set>
 #include <sstream>
+#include "proxy_bridge.h"
 #pragma comment(lib, "winhttp.lib")
 
 #ifndef M_PI
@@ -170,6 +171,7 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
 double simconnect_fetch_interval_sec = 1.0;      // SimConnect fetch (default 1s)
 double vatsim_fetch_interval_sec = 15.0;         // VATSIM fetch/correlate (default 15s)
 double vatsim_refill_interval_sec = 15.0;        // VATSIM refill (callsign-based, default 15s)
+double proxy_correlation_interval_sec = 1.0;     // Proxy correlation interval (default 1s, min 1s)
 
 // Helper to parse ISO8601 string to epoch seconds
 int64_t ParseIso8601ToEpochSec(const std::string& iso8601) {
@@ -188,6 +190,12 @@ int64_t ParseIso8601ToEpochSec(const std::string& iso8601) {
 std::atomic<int64_t> vatsim_update_epoch_sec{0};
 
 void CorrelateVatsimToSimConnect() {
+    // Check if proxy is active - if so, skip VATSIM correlation
+    if (is_proxy_active()) {
+        std::cout << "Proxy is active, skipping VATSIM correlation" << std::endl;
+        return;
+    }
+    
     // Take a snapshot of SimObjectIDs
     std::vector<int> simIds;
     {
@@ -226,8 +234,8 @@ void CorrelateVatsimToSimConnect() {
                     int svs = 0;
                     if (exact_entry->contains("vs")) svs = exact_entry->at("vs").get<int>();
                     // Set distance and altitude limits based on on_ground
-                    if (on_ground == 1) {
-                        // On ground: diff2d < 2x gs (min 15ft), alt diff <= 15ft
+                    if (on_ground == 1 || sgs < 30) {
+                        // On ground or slow: diff2d < 2x gs (min 15ft), alt diff <= 15ft
                         double min_radius_m = 15.0 * 0.3048;
                         radius = 2.0 * sgs;
                         if (radius < min_radius_m) radius = min_radius_m; // meters (minimum 15ft)
@@ -251,7 +259,7 @@ void CorrelateVatsimToSimConnect() {
                         double hdg_diff = std::fabs(std::fmod(std::fabs(shdg - vhdg + 180.0), 360.0) - 180.0); // shortest angle diff
                         // Safeguard: altitude difference
                         bool alt_ok = false;
-                        if (on_ground == 1) {
+                        if (on_ground == 1 || sgs < 30) {
                             alt_ok = (alt_diff <= 30.0);
                         } else {
                             double alt_limit = 0.0;
@@ -347,8 +355,139 @@ void CorrelateVatsimToSimConnect() {
     }
 }
 
+// Function to correlate proxy data with SimConnect aircraft
+void CorrelateProxyToSimConnect() {
+    if (!has_proxy_data()) {
+        return; // No proxy data available
+    }
+    
+    // Check if proxy is active - if not, skip proxy correlation
+    if (!is_proxy_active()) {
+        std::cout << "Proxy not active, skipping proxy correlation" << std::endl;
+        return;
+    }
+    
+    nlohmann::json proxyData = get_proxy_pilots_data();
+    if (!proxyData.contains("pilots") || !proxyData["pilots"].is_array()) {
+        return;
+    }
+    
+    // Take a snapshot of SimObjectIDs
+    std::vector<int> simIds;
+    {
+        std::lock_guard<std::mutex> simLock(simAircraftMutex);
+        for (const auto& [simid, _] : simAircraftMap) simIds.push_back(simid);
+    }
+    
+    auto now = std::chrono::steady_clock::now();
+    
+    for (int simid : simIds) {
+        double slat, slon, salt, shdg;
+        int sgs, on_ground;
+        double radius = 500.0;
+        bool use_history = false;
+        
+        {
+            std::lock_guard<std::mutex> simLock(simAircraftMutex);
+            auto& simjson = simAircraftMap[simid];
+            
+            // Only try to correlate if this aircraft doesn't have a callsign yet
+            if (!simjson["callsign"].get<std::string>().empty()) {
+                continue; // Already correlated
+            }
+            
+            // Use current position or position history for correlation
+            if (simjson.contains("position_history") && simjson["position_history"].is_array() && !simjson["position_history"].empty()) {
+                const auto& history = simjson["position_history"];
+                const auto& latest = history.back();
+                
+                slat = latest["lat"].get<double>();
+                slon = latest["lon"].get<double>();
+                salt = latest["alt"].get<double>();
+                shdg = latest["hdg"].get<double>();
+                sgs = latest["gs"].get<int>();
+                on_ground = latest["gnd"].get<int>();
+                use_history = true;
+            } else {
+                // Use current position
+                slat = simjson["latitude"].get<double>();
+                slon = simjson["longitude"].get<double>();
+                salt = simjson["altitude"].get<double>();
+                shdg = simjson["heading"].get<double>();
+                sgs = simjson["groundspeed"].get<int>();
+                on_ground = simjson["on_ground"].get<int>();
+            }
+            
+            // Set correlation radius based on aircraft state
+            if (on_ground == 1 || sgs < 30) {
+                double min_radius_m = 15.0 * 0.3048;
+                radius = 2.0 * sgs;
+                if (radius < min_radius_m) radius = min_radius_m;
+            } else {
+                radius = 4.0 * sgs;
+            }
+            
+            // Find best matching proxy aircraft
+            int bestPilotIdx = -1;
+            double bestDist = 1e9;
+            
+            for (size_t i = 0; i < proxyData["pilots"].size(); ++i) {
+                const auto& pilot = proxyData["pilots"][i];
+                if (!pilot.contains("latitude") || !pilot.contains("longitude") || !pilot.contains("altitude")) {
+                    continue;
+                }
+                
+                double plat = pilot["latitude"].get<double>();
+                double plon = pilot["longitude"].get<double>();
+                double palt = pilot["altitude"].get<double>();
+                
+                double dist2d = Haversine(slat, slon, plat, plon);
+                double alt_diff = std::abs(salt - palt);
+                
+                // Altitude tolerance based on aircraft state
+                bool alt_ok = false;
+                if (on_ground == 1 || sgs < 30) {
+                    alt_ok = (alt_diff <= 30.0);
+                } else {
+                    alt_ok = (alt_diff <= 100.0);
+                }
+                
+                if (dist2d < radius && dist2d < bestDist && alt_ok) {
+                    bestDist = dist2d;
+                    bestPilotIdx = static_cast<int>(i);
+                }
+            }
+            
+            // If we found a match, correlate the aircraft
+            if (bestPilotIdx != -1) {
+                const auto& pilot = proxyData["pilots"][bestPilotIdx];
+                
+                // Update SimConnect aircraft with proxy data
+                simjson["callsign"] = pilot.value("callsign", "");
+                simjson["transponder"] = pilot.value("transponder", "");
+                
+                // Set a timestamp for this correlation
+                simjson["last_proxy_update"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+                
+                // Remove position history since we're now correlated
+                if (simjson.contains("position_history")) {
+                    simjson.erase("position_history");
+                }
+                
+                std::cout << "Proxy Correlated: " << simjson.dump() << std::endl;
+            }
+        }
+    }
+}
+
 // Helper function to fetch VATSIM data
 void FetchVatsimData() {
+    // Check if proxy is active - if so, skip VATSIM fetch
+    if (is_proxy_active()) {
+        std::cout << "Proxy is active, skipping VATSIM fetch (thread " << std::this_thread::get_id() << ")" << std::endl;
+        return;
+    }
+    
     std::cout << "Requesting VATSIM data... (thread " << std::this_thread::get_id() << ")" << std::endl;
     HINTERNET hSession = WinHttpOpen(L"SimConnectBridge/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return;
@@ -407,6 +546,35 @@ void VatsimFetchThread() {
     while (!quit) {
         FetchVatsimData();
         double sleep_ms = vatsim_fetch_interval_sec * 1000.0;
+        int step = 100; // ms
+        int steps = static_cast<int>(sleep_ms / step);
+        double remainder = sleep_ms - (steps * step);
+        for (int i = 0; i < steps && !quit; ++i) {
+            Sleep(step);
+        }
+        if (!quit && remainder > 0) {
+            Sleep(static_cast<DWORD>(remainder));
+        }
+    }
+}
+
+void ProxyCorrelationThread() {
+    while (!quit) {
+        CorrelateProxyToSimConnect();
+        
+        // Print status every 30 seconds
+        static int status_counter = 0;
+        status_counter++;
+        if (status_counter >= 30) {
+            status_counter = 0;
+            if (is_proxy_active()) {
+                std::cout << "Status: Using PROXY data for correlation" << std::endl;
+            } else {
+                std::cout << "Status: Using VATSIM data for correlation" << std::endl;
+            }
+        }
+        
+        double sleep_ms = proxy_correlation_interval_sec * 1000.0;
         int step = 100; // ms
         int steps = static_cast<int>(sleep_ms / step);
         double remainder = sleep_ms - (steps * step);
@@ -517,6 +685,14 @@ int main() {
         double val; if (iss >> val && val >= 4.0) vatsim_refill_interval_sec = val;
     }
     if (vatsim_refill_interval_sec < 4.0) vatsim_refill_interval_sec = 4.0;
+    
+    // Set proxy correlation interval to max of simconnect interval and 1.0 seconds
+    if (simconnect_fetch_interval_sec > 1.0) {
+        proxy_correlation_interval_sec = simconnect_fetch_interval_sec;
+    } else {
+        proxy_correlation_interval_sec = 1.0;
+    }
+    std::cout << "Proxy correlation interval set to: " << proxy_correlation_interval_sec << " seconds" << std::endl;
     HRESULT hr = SimConnect_Open(&hSimConnect, "MSFS SimConnect Bridge", nullptr, 0, 0, 0);
     if (FAILED(hr)) {
         std::cerr << "Failed to open SimConnect: " << std::hex << hr << std::endl;
@@ -537,8 +713,15 @@ int main() {
 
     std::cout << "SimConnect bridge running. Press Ctrl+C to quit. (thread " << std::this_thread::get_id() << ")" << std::endl;
 
+    // Initialize proxy connections
+    std::cout << "Initializing proxy connections..." << std::endl;
+    std::thread proxyConnectionsThread(init_proxy_connections);
+    
     // Start VATSIM fetch thread
     std::thread vatsimThread(VatsimFetchThread);
+
+    // Start proxy correlation thread
+    std::thread proxyThread(ProxyCorrelationThread);
 
     // Start HTTP server thread
     std::thread httpThread(HttpServerThread);
@@ -564,13 +747,16 @@ int main() {
             Sleep(static_cast<DWORD>(remainder));
         }
         CleanupStaleSimObjects(seenSimObjectIds);
+        
         std::cout << "SimConnect polling... (thread " << std::this_thread::get_id() << ")" << std::endl;
     }
 
-    // Signal VATSIM thread to quit and join
+    // Signal threads to quit and join
     quit = true;
     if (vatsimThread.joinable()) vatsimThread.join();
+    if (proxyThread.joinable()) proxyThread.join();
     if (httpThread.joinable()) httpThread.join();
+    if (proxyConnectionsThread.joinable()) proxyConnectionsThread.join();
 
     SimConnect_Close(hSimConnect);
     std::cout << "SimConnect bridge closed." << std::endl;

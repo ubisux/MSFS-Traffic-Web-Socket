@@ -10,6 +10,10 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 - Exposes the full aircraft JSON map via a WebSocket server on `localhost`.
 
 ## Version History
+0.4.1
+- Adjusted correlation logic due to on_ground status from Simconnect being inaccurate.
+- Updated Towerview (Typescript) code.
+
 0.4
 - Added logging of position history for the past 60s to correlate with Vatsim due to vatsim update frequency, using lateral and vertical distance factors, giving better accuracy.
 - Removed recorrelation logic.

@@ -211,7 +211,7 @@ function AircraftMarker({
   const m = toMercator([value.longitude, value.latitude]);
   const position: [number, number, number] = [
     -(m[0] - offset[0]),
-    value.altitude * 0.3048 + 30,
+    value.altitude * 0.3048 * 1.088 + 30,
     m[1] - offset[1],
   ];
 
@@ -964,9 +964,9 @@ export default function TowerViewThree({
                 <p>
                   Alt (MSFS, m): {" "}
                   <input
-                    value={altMSFSInput !== undefined ? altMSFSInput : (cameraState.alt * 3.28084).toFixed(2)}
+                    value={altMSFSInput !== undefined ? altMSFSInput : cameraState.alt.toFixed(2)}
                     type="number"
-                    step="1"
+                    step="0.5"
                     onChange={(e) => {
                       setAltMSFSInput(e.target.value);
                       const meters = (+e.target.value * 1.088).toFixed(2);

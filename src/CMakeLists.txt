@@ -5,8 +5,11 @@ project(simconnect_bridge)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Source file
-add_executable(simconnect_bridge simconnect_bridge.cpp)
+# Source files
+add_executable(simconnect_bridge simconnect_bridge.cpp proxy.cpp)
+
+# Add proxy_bridge.h as a header (for IDE support)
+set_property(TARGET simconnect_bridge PROPERTY HEADER_FILES proxy_bridge.h)
 
 # SimConnect include and library
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})
@@ -14,7 +17,7 @@ link_directories(${CMAKE_CURRENT_SOURCE_DIR})
 
 # Link against SimConnect.lib using absolute path
 set(SIMCONNECT_LIB_PATH "${CMAKE_CURRENT_SOURCE_DIR}/SimConnect.lib")
-target_link_libraries(simconnect_bridge "${SIMCONNECT_LIB_PATH}" ws2_32 shlwapi)
+target_link_libraries(simconnect_bridge "${SIMCONNECT_LIB_PATH}" ws2_32 shlwapi winhttp)
 
 # Set output directory to ../../build
 set_target_properties(simconnect_bridge PROPERTIES
