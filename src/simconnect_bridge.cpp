@@ -189,12 +189,20 @@ int64_t ParseIso8601ToEpochSec(const std::string& iso8601) {
 // Global variable to store latest VATSIM update timestamp (epoch seconds)
 std::atomic<int64_t> vatsim_update_epoch_sec{0};
 
+// Forward declarations
+void CorrelateVatsimToSimConnect();
+void CorrelateProxyToSimConnect();
+void RefillAircraftFieldsFromVatsim();
+void FetchVatsimData();
+
 void CorrelateVatsimToSimConnect() {
-    // Check if proxy is active - if so, skip VATSIM correlation
+    // Check if we should use VATSIM for correlation (proxy not active)
     if (is_proxy_active()) {
-        std::cout << "Proxy is active, skipping VATSIM correlation" << std::endl;
-        return;
+        std::cout << "Proxy is active, skipping VATSIM correlation (using for field refill only)" << std::endl;
+        return; // Skip VATSIM correlation if proxy is active
     }
+    
+    std::cout << "Proxy not active, using VATSIM for correlation" << std::endl;
     
     // Take a snapshot of SimObjectIDs
     std::vector<int> simIds;
@@ -358,14 +366,16 @@ void CorrelateVatsimToSimConnect() {
 // Function to correlate proxy data with SimConnect aircraft
 void CorrelateProxyToSimConnect() {
     if (!has_proxy_data()) {
+        std::cout << "No proxy data available" << std::endl;
         return; // No proxy data available
     }
     
-    // Check if proxy is active - if not, skip proxy correlation
     if (!is_proxy_active()) {
-        std::cout << "Proxy not active, skipping proxy correlation" << std::endl;
-        return;
+        std::cout << "Proxy not active (last update: " << get_last_proxy_update_time() << "), skipping proxy correlation" << std::endl;
+        return; // Proxy not active, will fall back to VATSIM
     }
+    
+    std::cout << "Proxy is active, performing proxy correlation" << std::endl;
     
     nlohmann::json proxyData = get_proxy_pilots_data();
     if (!proxyData.contains("pilots") || !proxyData["pilots"].is_array()) {
@@ -480,14 +490,67 @@ void CorrelateProxyToSimConnect() {
     }
 }
 
+// Function to refill aircraft fields from VATSIM data (even when proxy is active)
+void RefillAircraftFieldsFromVatsim() {
+    std::lock_guard<std::mutex> vatsimLock(vatsimMutex);
+    if (!vatsimData.contains("pilots")) return;
+    
+    std::lock_guard<std::mutex> simLock(simAircraftMutex);
+    auto now = std::chrono::steady_clock::now();
+    
+    for (auto& [simid, simjson] : simAircraftMap) {
+        // Only refill if aircraft has a callsign (already correlated)
+        if (simjson["callsign"].get<std::string>().empty()) {
+            continue;
+        }
+        
+        std::string callsign = simjson["callsign"].get<std::string>();
+        
+        // Find matching VATSIM pilot
+        for (const auto& pilot : vatsimData["pilots"]) {
+            if (pilot.value("callsign", "") == callsign) {
+                // Check if we can update (based on refill interval)
+                bool vatsimFieldsEmpty = simjson["type"].get<std::string>().empty() && 
+                                        simjson["dep"].get<std::string>().empty() && 
+                                        simjson["arr"].get<std::string>().empty();
+                
+                auto it = simjson.contains("last_vatsim_update") ? 
+                    std::optional<std::int64_t>(simjson["last_vatsim_update"].get<std::int64_t>()) : std::nullopt;
+                
+                bool canUpdate = vatsimFieldsEmpty;
+                if (!canUpdate && it) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count() - *it;
+                    if (elapsed >= vatsim_refill_interval_sec) canUpdate = true;
+                }
+                
+                if (canUpdate) {
+                    // Update aircraft type
+                    if (pilot.contains("aircraft_short") && pilot["aircraft_short"].is_string()) {
+                        simjson["type"] = pilot["aircraft_short"].get<std::string>();
+                    } else if (pilot.contains("flight_plan") && pilot["flight_plan"].contains("aircraft_short") && pilot["flight_plan"]["aircraft_short"].is_string()) {
+                        simjson["type"] = pilot["flight_plan"]["aircraft_short"].get<std::string>();
+                    }
+                    
+                    // Update flight plan fields
+                    if (pilot.contains("flight_plan")) {
+                        const auto& fp = pilot["flight_plan"];
+                        simjson["dep"] = (fp.contains("departure") && fp["departure"].is_string()) ? fp["departure"].get<std::string>() : "";
+                        simjson["arr"] = (fp.contains("arrival") && fp["arrival"].is_string()) ? fp["arrival"].get<std::string>() : "";
+                        simjson["deptime"] = (fp.contains("deptime") && fp["deptime"].is_string()) ? fp["deptime"].get<std::string>() : "";
+                        simjson["transponder_asgn"] = (fp.contains("assigned_transponder") && fp["assigned_transponder"].is_string()) ? fp["assigned_transponder"].get<std::string>() : "";
+                    }
+                    
+                    simjson["last_vatsim_update"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+                    std::cout << "VATSIM field refill for " << callsign << ": " << simjson.dump() << std::endl;
+                }
+                break;
+            }
+        }
+    }
+}
+
 // Helper function to fetch VATSIM data
 void FetchVatsimData() {
-    // Check if proxy is active - if so, skip VATSIM fetch
-    if (is_proxy_active()) {
-        std::cout << "Proxy is active, skipping VATSIM fetch (thread " << std::this_thread::get_id() << ")" << std::endl;
-        return;
-    }
-    
     std::cout << "Requesting VATSIM data... (thread " << std::this_thread::get_id() << ")" << std::endl;
     HINTERNET hSession = WinHttpOpen(L"SimConnectBridge/1.0", WINHTTP_ACCESS_TYPE_DEFAULT_PROXY, WINHTTP_NO_PROXY_NAME, WINHTTP_NO_PROXY_BYPASS, 0);
     if (!hSession) return;
@@ -545,6 +608,10 @@ void FetchVatsimData() {
 void VatsimFetchThread() {
     while (!quit) {
         FetchVatsimData();
+        
+        // Always try to refill fields from VATSIM data (even when proxy is active)
+        RefillAircraftFieldsFromVatsim();
+        
         double sleep_ms = vatsim_fetch_interval_sec * 1000.0;
         int step = 100; // ms
         int steps = static_cast<int>(sleep_ms / step);
@@ -561,19 +628,6 @@ void VatsimFetchThread() {
 void ProxyCorrelationThread() {
     while (!quit) {
         CorrelateProxyToSimConnect();
-        
-        // Print status every 30 seconds
-        static int status_counter = 0;
-        status_counter++;
-        if (status_counter >= 30) {
-            status_counter = 0;
-            if (is_proxy_active()) {
-                std::cout << "Status: Using PROXY data for correlation" << std::endl;
-            } else {
-                std::cout << "Status: Using VATSIM data for correlation" << std::endl;
-            }
-        }
-        
         double sleep_ms = proxy_correlation_interval_sec * 1000.0;
         int step = 100; // ms
         int steps = static_cast<int>(sleep_ms / step);
@@ -656,6 +710,14 @@ void CALLBACK MyDispatchProcWithSeenSet(SIMCONNECT_RECV* pData, DWORD cbData, vo
 }
 
 int main() {
+#ifdef _WIN32
+    WSADATA wsaData;
+    if (WSAStartup(MAKEWORD(2,2), &wsaData) != 0) {
+        std::cerr << "WSAStartup failed." << std::endl;
+        return 1;
+    }
+#endif
+
     // Disable QuickEdit mode to prevent console from pausing on text selection
     HANDLE hInput = GetStdHandle(STD_INPUT_HANDLE);
     DWORD prev_mode;
@@ -713,15 +775,14 @@ int main() {
 
     std::cout << "SimConnect bridge running. Press Ctrl+C to quit. (thread " << std::this_thread::get_id() << ")" << std::endl;
 
-    // Initialize proxy connections
-    std::cout << "Initializing proxy connections..." << std::endl;
-    std::thread proxyConnectionsThread(init_proxy_connections);
-    
     // Start VATSIM fetch thread
     std::thread vatsimThread(VatsimFetchThread);
 
     // Start proxy correlation thread
     std::thread proxyThread(ProxyCorrelationThread);
+
+    // Start proxy connection threads
+    std::thread proxyConnectionsThread(start_proxy_threads, std::ref(quit));
 
     // Start HTTP server thread
     std::thread httpThread(HttpServerThread);
@@ -755,13 +816,17 @@ int main() {
     quit = true;
     if (vatsimThread.joinable()) vatsimThread.join();
     if (proxyThread.joinable()) proxyThread.join();
-    if (httpThread.joinable()) httpThread.join();
     if (proxyConnectionsThread.joinable()) proxyConnectionsThread.join();
+    if (httpThread.joinable()) httpThread.join();
 
     SimConnect_Close(hSimConnect);
     std::cout << "SimConnect bridge closed." << std::endl;
     std::cout << "Press Enter to exit..." << std::endl;
     std::cin.get();
+    
+#ifdef _WIN32
+    WSACleanup();
+#endif
     return 0;
 }
  

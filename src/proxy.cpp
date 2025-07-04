@@ -14,7 +14,6 @@
 #include "json.hpp"
 #include <mutex>
 #ifdef _WIN32
-#define _WINSOCK_DEPRECATED_NO_WARNINGS
 #include <winsock2.h>
 #include <ws2tcpip.h>
 #pragma comment(lib, "ws2_32.lib")
@@ -34,11 +33,15 @@ bool DEBUG_JSON = false; // Control JSON output printing
 json pilots_data = json::object();
 std::mutex pilots_mutex;
 std::string partial_message = ""; // For handling messages that span across packets
-std::atomic<int64_t> last_proxy_update_time{0}; // Timestamp of last proxy data update
+int64_t last_proxy_update_time = 0; // Timestamp of last proxy data update
 
 // Function to parse aircraft position data
 void parse_aircraft_data(const std::string& data) {
     std::lock_guard<std::mutex> lock(pilots_mutex);
+    
+    // Update the last proxy update time
+    auto now = std::chrono::system_clock::now();
+    last_proxy_update_time = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     
     // Initialize pilots array if it doesn't exist
     if (!pilots_data.contains("pilots")) {
@@ -107,10 +110,6 @@ void parse_aircraft_data(const std::string& data) {
                     if (DEBUG) std::cout << "Added new pilot: " << callsign << std::endl;
                 }
                 
-                // Update the last proxy update timestamp
-                auto now = std::chrono::system_clock::now();
-                last_proxy_update_time.store(std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count());
-                
             } catch (const std::exception& e) {
                 if (DEBUG) std::cerr << "Error parsing aircraft data: " << match << " - " << e.what() << std::endl;
             }
@@ -138,15 +137,22 @@ bool has_proxy_data() {
 
 // Function to check if proxy is actively receiving data (within last 15 seconds)
 bool is_proxy_active() {
+    std::lock_guard<std::mutex> lock(pilots_mutex);
+    if (last_proxy_update_time == 0) {
+        return false; // Never received any data
+    }
+    
     auto now = std::chrono::system_clock::now();
     int64_t current_time = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-    int64_t last_update = last_proxy_update_time.load();
-    return (current_time - last_update) <= 15; // Active if data received within last 15 seconds
+    int64_t time_diff = current_time - last_proxy_update_time;
+    
+    return time_diff <= 15; // Active if data received within last 15 seconds
 }
 
 // Function to get the timestamp of the last proxy data update
 int64_t get_last_proxy_update_time() {
-    return last_proxy_update_time.load();
+    std::lock_guard<std::mutex> lock(pilots_mutex);
+    return last_proxy_update_time;
 }
 
 void handle_connection(const char* label, const char* handshake1, const char* handshake2, const char* outfile, int local_port, std::function<void(const std::string&)> on_receive = nullptr) {
@@ -189,7 +195,11 @@ void handle_connection(const char* label, const char* handshake1, const char* ha
         std::memset(&serv_addr, 0, sizeof(serv_addr));
         serv_addr.sin_family = AF_INET;
         serv_addr.sin_port = htons(6810);
-        serv_addr.sin_addr.s_addr = inet_addr("127.0.0.1");
+#ifdef _WIN32
+        InetPtonA(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
+#else
+        inet_pton(AF_INET, "127.0.0.1", &serv_addr.sin_addr);
+#endif
         if (connect(sockfd, (sockaddr*)&serv_addr, sizeof(serv_addr)) < 0) {
             std::cerr << "[" << label << "] Connection failed." << std::endl;
 #ifdef _WIN32
@@ -397,8 +407,8 @@ void print_pilots_data() {
     std::cout << json_str << std::endl;
 }
 
-// Function to initialize proxy connections (called from simconnect_bridge main)
-void init_proxy_connections() {
+// Function to initialize proxy connections and start threads
+void start_proxy_threads(std::atomic<bool>& quit_flag) {
     // Initialize pilots data structure
     pilots_data["pilots"] = json::array();
     
@@ -417,7 +427,13 @@ void init_proxy_connections() {
         }
     });
     
-    t1.join();
-    t2.join();
-    t3.join();
+    // Wait for quit signal
+    while (!quit_flag) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
+    
+    // Join threads (they will exit when handle_connection detects the quit)
+    if (t1.joinable()) t1.join();
+    if (t2.joinable()) t2.join();
+    if (t3.joinable()) t3.join();
 } 
