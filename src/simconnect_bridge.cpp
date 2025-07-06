@@ -263,6 +263,7 @@ void CorrelateVatsimToSimConnect();
 void CorrelateProxyToSimConnect();
 void RefillAircraftFieldsFromVatsim();
 void FetchVatsimData();
+void RefillAircraftFieldsFromProxy();
 
 void CorrelateVatsimToSimConnect() {
     // Check if we should use VATSIM for correlation (proxy not active)
@@ -550,7 +551,7 @@ void CorrelateProxyToSimConnect() {
                 
                 // Update SimConnect aircraft with proxy data
                 simjson["callsign"] = pilot.value("callsign", "");
-                simjson["transponder"] = pilot.value("transponder", "");
+                // simjson["transponder"] = pilot.value("transponder", ""); (not during correlation, but during refill)
                 
                 // Set a timestamp for this correlation
                 simjson["last_proxy_update"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
@@ -695,6 +696,9 @@ void VatsimFetchThread() {
         // Always try to refill fields from VATSIM data (even when proxy is active)
         RefillAircraftFieldsFromVatsim();
         
+        // After RefillAircraftFieldsFromVatsim(), call RefillAircraftFieldsFromProxy() at the same frequency
+        RefillAircraftFieldsFromProxy();
+        
         double sleep_ms = vatsim_fetch_interval_sec * 1000.0;
         int step = 100; // ms
         int steps = static_cast<int>(sleep_ms / step);
@@ -789,6 +793,47 @@ void CALLBACK MyDispatchProcWithSeenSet(SIMCONNECT_RECV* pData, DWORD cbData, vo
         }
         default:
             break;
+    }
+}
+
+// Helper to refill aircraft fields from Proxy data (gate, transponder)
+void RefillAircraftFieldsFromProxy() {
+    // Get proxy data
+    nlohmann::json proxyData = get_proxy_pilots_data();
+    if (!proxyData.contains("pilots")) return;
+
+    std::lock_guard<std::mutex> simLock(simAircraftMutex);
+    auto now = std::chrono::steady_clock::now();
+
+    for (auto& [simid, simjson] : simAircraftMap) {
+        // Only refill if aircraft has a callsign (already correlated)
+        if (simjson["callsign"].get<std::string>().empty()) {
+            continue;
+        }
+        std::string callsign = simjson["callsign"].get<std::string>();
+        // Find matching proxy pilot
+        for (const auto& pilot : proxyData["pilots"]) {
+            if (pilot.value("callsign", "") == callsign) {
+                // Check if we can update (based on refill interval)
+                bool proxyFieldsEmpty = (!simjson.contains("gate") || simjson["gate"].get<std::string>().empty()) && 
+                                        (!simjson.contains("transponder") || simjson["transponder"].get<std::string>().empty());
+                auto it = simjson.contains("last_proxy_refill") ? 
+                    std::optional<std::int64_t>(simjson["last_proxy_refill"].get<std::int64_t>()) : std::nullopt;
+                bool canUpdate = proxyFieldsEmpty;
+                if (!canUpdate && it) {
+                    auto elapsed = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count() - *it;
+                    if (elapsed >= vatsim_refill_interval_sec) canUpdate = true;
+                }
+                if (canUpdate) {
+                    // Update gate and transponder from proxy
+                    simjson["gate"] = pilot.value("gate", "");
+                    simjson["transponder"] = pilot.value("transponder", "");
+                    simjson["last_proxy_refill"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+                    std::cout << "Proxy field refill for " << callsign << ": " << simjson.dump() << std::endl;
+                }
+                break;
+            }
+        }
     }
 }
 

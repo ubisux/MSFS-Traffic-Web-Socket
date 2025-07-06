@@ -48,72 +48,89 @@ void parse_aircraft_data(const std::string& data) {
         pilots_data["pilots"] = json::array();
     }
     
-    // Find all aircraft position data between @N: or @S: and \r\n
+    // Regex for aircraft position data (@N: or @S: ...)
     std::regex aircraft_regex(R"((@[NS]:[^:\r\n]+:[^:\r\n]+:[^:\r\n]+:[^:\r\n]+:[^:\r\n]+:[^:\r\n]+:[^:\r\n]+:[^:\r\n]+)\r?\n?)");
-    std::sregex_iterator iter(data.begin(), data.end(), aircraft_regex);
-    std::sregex_iterator end;
+    // Regex for gate/callsign extraction (:SC:CALLSIGN:GRP/S/GATE)
+    std::regex grp_regex(R"(:SC:([^:\r\n]+):GRP/S/([^:\r\n]+))");
     
-    for (; iter != end; ++iter) {
-        std::string match = iter->str(1);
-        
-        // Parse the aircraft data
-        std::vector<std::string> parts;
-        std::stringstream ss(match);
-        std::string item;
-        
-        // Split by colon
-        while (std::getline(ss, item, ':')) {
-            parts.push_back(item);
-        }
-        
-        // Check if we have enough parts (should be 9: @N/@S, callsign, transponder, ignore, lat, lon, alt, groundspeed, unknown)
-        if (parts.size() >= 8) {
-            std::string type = parts[0]; // @N or @S
-            std::string callsign = parts[1];
-            std::string transponder = parts[2];
-            // parts[3] is ignore field
-            std::string lat_str = parts[4];
-            std::string lon_str = parts[5];
-            std::string alt_str = parts[6];
-            std::string groundspeed_str = parts[7];
-            
-            try {
-                // Convert string values to appropriate types
-                double latitude = std::stod(lat_str);
-                double longitude = std::stod(lon_str);
-                int altitude = std::stoi(alt_str);
-                int groundspeed = std::stoi(groundspeed_str);
-                
-                // Create pilot object
-                json pilot = {
-                    {"callsign", callsign},
-                    {"latitude", latitude},
-                    {"longitude", longitude},
-                    {"altitude", altitude},
-                    {"groundspeed", groundspeed},
-                    {"transponder", transponder}
-                };
-                
-                // Check if pilot already exists and update, otherwise add new
-                bool found = false;
-                for (auto& existing_pilot : pilots_data["pilots"]) {
-                    if (existing_pilot["callsign"] == callsign) {
-                        existing_pilot = pilot; // Replace with new data
-                        found = true;
-                        if (DEBUG) std::cout << "Updated pilot: " << callsign << std::endl;
-                        break;
+    // Split data into lines/messages
+    std::stringstream ss(data);
+    std::string line;
+    while (std::getline(ss, line)) {
+        // 1. Aircraft position parsing (all matches)
+        for (std::sregex_iterator it(line.begin(), line.end(), aircraft_regex), end; it != end; ++it) {
+            std::smatch match = *it;
+            std::string match_str = match[1];
+            std::vector<std::string> parts;
+            std::stringstream ss2(match_str);
+            std::string item;
+            while (std::getline(ss2, item, ':')) {
+                parts.push_back(item);
+            }
+            if (parts.size() >= 8) {
+                std::string type = parts[0]; // @N or @S
+                std::string callsign = parts[1];
+                std::string transponder = parts[2];
+                std::string lat_str = parts[4];
+                std::string lon_str = parts[5];
+                std::string alt_str = parts[6];
+                std::string groundspeed_str = parts[7];
+                try {
+                    double latitude = std::stod(lat_str);
+                    double longitude = std::stod(lon_str);
+                    int altitude = std::stoi(alt_str);
+                    int groundspeed = std::stoi(groundspeed_str);
+                    json pilot = {
+                        {"callsign", callsign},
+                        {"latitude", latitude},
+                        {"longitude", longitude},
+                        {"altitude", altitude},
+                        {"groundspeed", groundspeed},
+                        {"transponder", transponder}
+                    };
+                    bool found = false;
+                    for (auto& existing_pilot : pilots_data["pilots"]) {
+                        if (existing_pilot["callsign"] == callsign) {
+                            // Update all fields except gate (if present)
+                            for (auto& el : pilot.items()) {
+                                existing_pilot[el.key()] = el.value();
+                            }
+                            found = true;
+                            if (DEBUG) std::cout << "Updated pilot: " << callsign << std::endl;
+                            break;
+                        }
                     }
+                    if (!found) {
+                        pilots_data["pilots"].push_back(pilot);
+                        if (DEBUG) std::cout << "Added new pilot: " << callsign << std::endl;
+                    }
+                } catch (const std::exception& e) {
+                    if (DEBUG) std::cerr << "Error parsing aircraft data: " << match_str << " - " << e.what() << std::endl;
                 }
-                
-                if (!found) {
-                    pilots_data["pilots"].push_back(pilot);
-                    if (DEBUG) std::cout << "Added new pilot: " << callsign << std::endl;
-                }
-                
-            } catch (const std::exception& e) {
-                if (DEBUG) std::cerr << "Error parsing aircraft data: " << match << " - " << e.what() << std::endl;
             }
         }
+        // 2. Gate/callsign parsing (all matches)
+        for (std::sregex_iterator it(line.begin(), line.end(), grp_regex), end; it != end; ++it) {
+            std::smatch match = *it;
+            std::string callsign = match[1];
+            std::string gate = match[2];
+            bool found = false;
+            for (auto& pilot : pilots_data["pilots"]) {
+                if (pilot["callsign"] == callsign) {
+                    pilot["gate"] = gate;
+                    found = true;
+                    if (DEBUG) std::cout << "Updated gate for pilot: " << callsign << " -> " << gate << std::endl;
+                    break;
+                }
+            }
+            if (!found) {
+                // If not found, create a new pilot entry with gate info only
+                json pilot = {{"callsign", callsign}, {"gate", gate}};
+                pilots_data["pilots"].push_back(pilot);
+                if (DEBUG) std::cout << "Added new pilot with gate: " << callsign << " -> " << gate << std::endl;
+            }
+        }
+        // 3. Add more regexes here for future message types
     }
 }
 
