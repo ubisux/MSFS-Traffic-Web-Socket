@@ -77,7 +77,10 @@ nlohmann::json BuildAircraftJson(
     const std::string& transponder_asgn,
     const std::string& deptime,
     const std::string& depRwy,
-    const std::string& depSID
+    const std::string& depSID,
+    const std::string& gate,
+    const std::string& arrRwy,
+    const std::string& arrSTAR
 ) {
     nlohmann::json obj = {
         {"simobjectid", simobjectid},
@@ -96,7 +99,10 @@ nlohmann::json BuildAircraftJson(
         {"transponder_asgn", transponder_asgn},
         {"deptime", deptime},
         {"depRwy", depRwy},
-        {"departureSID", depSID}
+        {"departureSID", depSID},
+        {"gate", gate},
+        {"arrRwy", arrRwy},
+        {"arrSTAR", arrSTAR}
     };
     return obj;
 }
@@ -112,7 +118,7 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
     obj["verticalSpeed"] = static_cast<int>(data.vertical_speed);
     obj["on_ground"] = static_cast<int>(data.on_ground);
     obj["heading"] = data.heading * 180.0 / M_PI;
-    // Initialize VATSIM fields if not present, but do not overwrite
+    // Initialize VATSIM/proxy fields if not present, but do not overwrite
     if (!obj.contains("callsign")) obj["callsign"] = "";
     if (!obj.contains("type")) obj["type"] = "";
     if (!obj.contains("dep")) obj["dep"] = "";
@@ -122,6 +128,9 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
     if (!obj.contains("deptime")) obj["deptime"] = "";
     if (!obj.contains("depRwy")) obj["depRwy"] = "";
     if (!obj.contains("depSID")) obj["depSID"] = "";
+    if (!obj.contains("gate")) obj["gate"] = "";
+    if (!obj.contains("arrRwy")) obj["arrRwy"] = "";
+    if (!obj.contains("arrSTAR")) obj["arrSTAR"] = "";
     // Remove position_history from log output
     nlohmann::json log_obj = obj;
     if (log_obj.contains("position_history")) log_obj.erase("position_history");
@@ -174,7 +183,7 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
 }
 
 // === User-configurable refresh intervals (in seconds) ===
-double simconnect_fetch_interval_sec = 1.0;      // SimConnect fetch (default 1s)
+double simconnect_fetch_interval_sec = 0.1;      // SimConnect fetch (default 0.1s)
 double vatsim_fetch_interval_sec = 15.0;         // VATSIM fetch/correlate (default 15s)
 double vatsim_refill_interval_sec = 15.0;        // VATSIM refill (callsign-based, default 15s)
 double proxy_correlation_interval_sec = 1.0;     // Proxy correlation interval (default 1s, min 1s)
@@ -182,14 +191,12 @@ double proxy_correlation_interval_sec = 1.0;     // Proxy correlation interval (
 // Helper to extract departure SID from route string
 std::string ExtractDepartureSID(const std::string& route) {
     if (route.empty()) return "";
-    
     // Find the first space in the route
     size_t spacePos = route.find(' ');
     if (spacePos == std::string::npos) {
         // No space found, return the entire route
         return route;
     }
-    
     // Return the first word (before the first space)
     return route.substr(0, spacePos);
 }
@@ -197,17 +204,14 @@ std::string ExtractDepartureSID(const std::string& route) {
 // Helper to extract departure runway from route string
 std::string ExtractDepartureRunway(const std::string& route) {
     if (route.empty()) return "";
-    
     // Find the first space in the route
     size_t spacePos = route.find(' ');
     if (spacePos == std::string::npos) {
         // No space found, check if the entire route contains a "/"
         size_t slashPos = route.find('/');
         if (slashPos == std::string::npos) return "";
-        
         // Get the part after the "/"
         std::string afterSlash = route.substr(slashPos + 1);
-        
         // Extract only letters and numbers from the beginning
         std::string runway;
         for (char c : afterSlash) {
@@ -219,17 +223,13 @@ std::string ExtractDepartureRunway(const std::string& route) {
         }
         return runway;
     }
-    
     // Get the first word (before the first space)
     std::string firstWord = route.substr(0, spacePos);
-    
     // Find "/" in the first word
     size_t slashPos = firstWord.find('/');
     if (slashPos == std::string::npos) return "";
-    
     // Get the part after "/" in the first word
     std::string afterSlash = firstWord.substr(slashPos + 1);
-    
     // Extract only letters and numbers from the beginning
     std::string runway;
     for (char c : afterSlash) {
@@ -237,6 +237,40 @@ std::string ExtractDepartureRunway(const std::string& route) {
             runway += c;
         } else {
             break; // Stop at first non-alphanumeric character
+        }
+    }
+    return runway;
+}
+
+// Helper to extract arrival STAR from route string (last word before any "/")
+std::string ExtractArrivalSTAR(const std::string& route) {
+    if (route.empty()) return "";
+    // Find the last space in the route
+    size_t spacePos = route.find_last_of(' ');
+    std::string lastWord = (spacePos == std::string::npos) ? route : route.substr(spacePos + 1);
+    // If lastWord contains a "/", take the part before it
+    size_t slashPos = lastWord.find('/');
+    if (slashPos == std::string::npos) return lastWord;
+    return lastWord.substr(0, slashPos);
+}
+
+// Helper to extract arrival runway from route string (last word after any "/")
+std::string ExtractArrivalRunway(const std::string& route) {
+    if (route.empty()) return "";
+    // Find the last space in the route
+    size_t spacePos = route.find_last_of(' ');
+    std::string lastWord = (spacePos == std::string::npos) ? route : route.substr(spacePos + 1);
+    // Find "/" in the last word
+    size_t slashPos = lastWord.find('/');
+    if (slashPos == std::string::npos) return "";
+    std::string afterSlash = lastWord.substr(slashPos + 1);
+    // Extract only letters and numbers from the beginning
+    std::string runway;
+    for (char c : afterSlash) {
+        if (std::isalnum(c)) {
+            runway += c;
+        } else {
+            break;
         }
     }
     return runway;
@@ -381,10 +415,12 @@ void CorrelateVatsimToSimConnect() {
                                 simjson["deptime"] = (fp.contains("deptime") && fp["deptime"].is_string()) ? fp["deptime"].get<std::string>() : "";
                                 simjson["transponder_asgn"] = (fp.contains("assigned_transponder") && fp["assigned_transponder"].is_string()) ? fp["assigned_transponder"].get<std::string>() : "";
                                 
-                                // Extract departure runway from route
+                                // Extract departure and arrival runways and SIDs/STARs from route
                                 std::string route = (fp.contains("route") && fp["route"].is_string()) ? fp["route"].get<std::string>() : "";
                                 simjson["depRwy"] = ExtractDepartureRunway(route);
                                 simjson["depSID"] = ExtractDepartureSID(route);
+                                simjson["arrRwy"] = ExtractArrivalRunway(route);
+                                simjson["arrSTAR"] = ExtractArrivalSTAR(route);
                             } else {
                                 simjson["dep"] = "";
                                 simjson["arr"] = "";
@@ -392,6 +428,8 @@ void CorrelateVatsimToSimConnect() {
                                 simjson["transponder_asgn"] = "";
                                 simjson["depRwy"] = "";
                                 simjson["depSID"] = "";
+                                simjson["arrRwy"] = "";
+                                simjson["arrSTAR"] = "";
                             }
                             simjson["transponder"] = pilot.value("transponder", "");
                             simjson["last_vatsim_update"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
@@ -618,10 +656,12 @@ void RefillAircraftFieldsFromVatsim() {
                         simjson["deptime"] = (fp.contains("deptime") && fp["deptime"].is_string()) ? fp["deptime"].get<std::string>() : "";
                         simjson["transponder_asgn"] = (fp.contains("assigned_transponder") && fp["assigned_transponder"].is_string()) ? fp["assigned_transponder"].get<std::string>() : "";
                         
-                        // Extract departure runway from route
+                        // Extract departure and arrival runways and SIDs/STARs from route
                         std::string route = (fp.contains("route") && fp["route"].is_string()) ? fp["route"].get<std::string>() : "";
                         simjson["depRwy"] = ExtractDepartureRunway(route);
                         simjson["depSID"] = ExtractDepartureSID(route);
+                        simjson["arrRwy"] = ExtractArrivalRunway(route);
+                        simjson["arrSTAR"] = ExtractArrivalSTAR(route);
                     }
                     
                     simjson["last_vatsim_update"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
@@ -853,7 +893,7 @@ int main() {
         SetConsoleMode(hInput, prev_mode & ~ENABLE_QUICK_EDIT_MODE);
     }
     // Prompt user for refresh intervals
-    std::cout << "Enter SimConnect fetch interval in seconds (default 1, min 0.1): ";
+    std::cout << "Enter SimConnect fetch interval in seconds (default 0.1, min 0.1): ";
     std::string input;
     std::getline(std::cin, input);
     if (!input.empty()) {
