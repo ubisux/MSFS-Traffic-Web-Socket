@@ -36,6 +36,9 @@ double Haversine(double lat1, double lon1, double lat2, double lon2) {
 #define DEFINITION_1 1
 #define REQUEST_AI_AIRCRAFT 1
 
+#define DEFINITION_2 2
+#define REQUEST_CAMERA 2
+
 HANDLE hSimConnect = nullptr;
 std::atomic<bool> quit{false};
 
@@ -44,6 +47,23 @@ std::mutex vatsimMutex;
 
 std::unordered_map<int, nlohmann::json> simAircraftMap;
 std::mutex simAircraftMutex;
+
+// Camera JSON object and mutex (single object, not a map)
+// Structure:
+// {
+//   "gameplay_pitch_yaw_0": ...,
+//   "gameplay_pitch_yaw_1": ...,
+//   "camera_state": ...,
+//   "camera_view_type_and_index_0": ...,
+//   "camera_view_type_and_index_1": ...,
+//   "cockpit_camera_zoom": ...,
+//   "aircraft_latitude": ...,
+//   "aircraft_longitude": ...,
+//   "aircraft_altitude": ...,
+//   "aircraft_heading": ...
+// }
+nlohmann::json cameraJson;
+std::mutex cameraMutex;
 
 // Struct for aircraft data (matches simconnect_manager.cpp)
 struct AircraftData {
@@ -57,6 +77,17 @@ struct AircraftData {
     int32_t ground_velocity;
     int32_t vertical_speed;
     char title[256];
+};
+
+// Struct for camera data (matches DEFINITION_2)
+struct CameraData {
+    double gameplay_pitch_yaw_0;
+    double gameplay_pitch_yaw_1;
+    int32_t camera_state;
+    int32_t camera_view_type_and_index_0;
+    int32_t camera_view_type_and_index_1;
+    char cockpit_camera_zoom;
+//    char chase_camera_zoom;
 };
 
 // Helper to build a JSON object for a correlated aircraft
@@ -167,6 +198,14 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
         if (obj.contains("position_history"))
             obj.erase("position_history");
     }
+    // If this is the user aircraft (simobjectid == 1), update cameraJson with position and heading
+    if (object_id == 1) {
+        std::lock_guard<std::mutex> camLock(cameraMutex);
+        cameraJson["aircraft_latitude"] = data.latitude;
+        cameraJson["aircraft_longitude"] = data.longitude;
+        cameraJson["aircraft_altitude"] = data.altitude;
+        cameraJson["aircraft_heading"] = data.heading * 180.0 / M_PI;
+    }
     // std::cout << "Aircraft " << object_id
     //     << ": Alt=" << data.altitude << " ft"
     //     << ", Lat=" << data.latitude
@@ -180,6 +219,29 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
     //     << ", SQUAWK=" << data.transponder
     //     << ", Title='" << data.title << "'"
     //     << std::endl;
+}
+
+// PrintCameraData: Print and update the cameraJson object (thread-safe)
+void PrintCameraData(const CameraData& data) {
+    std::lock_guard<std::mutex> lock(cameraMutex);
+    // Preserve aircraft position fields if already set, or set to 0 if not present
+    double aircraft_latitude = cameraJson.value("aircraft_latitude", 0.0);
+    double aircraft_longitude = cameraJson.value("aircraft_longitude", 0.0);
+    double aircraft_altitude = cameraJson.value("aircraft_altitude", 0.0);
+    double aircraft_heading = cameraJson.value("aircraft_heading", 0.0);
+    cameraJson = {
+        {"gameplay_pitch_yaw_0", data.gameplay_pitch_yaw_0 * 180.0 / M_PI},
+        {"gameplay_pitch_yaw_1", data.gameplay_pitch_yaw_1 * 180.0 / M_PI},
+        {"camera_state", data.camera_state},
+        {"camera_view_type_and_index_0", data.camera_view_type_and_index_0},
+        {"camera_view_type_and_index_1", data.camera_view_type_and_index_1},
+        {"cockpit_camera_zoom", data.cockpit_camera_zoom},
+        {"aircraft_latitude", aircraft_latitude},
+        {"aircraft_longitude", aircraft_longitude},
+        {"aircraft_altitude", aircraft_altitude},
+        {"aircraft_heading", aircraft_heading}
+    };
+    std::cout << "[CAMERA] " << cameraJson.dump() << std::endl;
 }
 
 // === User-configurable refresh intervals (in seconds) ===
@@ -785,10 +847,19 @@ void HttpServerThread() {
                 arr.push_back(obj);
             }
         }
+        // Lock camera mutex to get cameraJson
+        nlohmann::json camera;
+        {
+            std::lock_guard<std::mutex> camLock(cameraMutex);
+            camera = cameraJson;
+        }
+        nlohmann::json response;
+        response["aircraft"] = arr;
+        response["camera"] = camera;
         res.set_header("Access-Control-Allow-Origin", "*");
         res.set_header("Access-Control-Allow-Methods", "GET, OPTIONS");
         res.set_header("Access-Control-Allow-Headers", "Content-Type");
-        res.set_content(arr.dump(), "application/json");
+        res.set_content(response.dump(), "application/json");
     });
     std::cout << "HTTP server running on http://localhost:8080/aircraft" << std::endl;
     svr.listen("0.0.0.0", 8080);
@@ -819,6 +890,17 @@ void CALLBACK MyDispatchProcWithSeenSet(SIMCONNECT_RECV* pData, DWORD cbData, vo
                     if (seenSimObjectIds) seenSimObjectIds->insert(static_cast<int>(pObjData->dwObjectID));
                 }
             }
+            break;
+        }
+        case SIMCONNECT_RECV_ID_SIMOBJECT_DATA: {
+            SIMCONNECT_RECV_SIMOBJECT_DATA* pObjData = (SIMCONNECT_RECV_SIMOBJECT_DATA*)pData;
+            if (pObjData->dwRequestID == REQUEST_CAMERA) {
+            if (pObjData->dwSize >= sizeof(CameraData)) {
+                     CameraData* data = (CameraData*)&pObjData->dwData;
+                    PrintCameraData(*data);
+                     if (seenSimObjectIds) seenSimObjectIds->insert(static_cast<int>(pObjData->dwObjectID));
+                 }
+             }
             break;
         }
         case SIMCONNECT_RECV_ID_EXCEPTION: {
@@ -940,7 +1022,13 @@ int main() {
     SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_1, "GROUND VELOCITY", "knots", SIMCONNECT_DATATYPE_INT32);
     SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_1, "VERTICAL SPEED", "ft/min", SIMCONNECT_DATATYPE_INT32);
     SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_1, "TITLE", "", SIMCONNECT_DATATYPE_STRING256);
-
+    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "CAMERA GAMEPLAY PITCH YAW:0", "radians", SIMCONNECT_DATATYPE_FLOAT64);
+    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "CAMERA GAMEPLAY PITCH YAW:1", "radians", SIMCONNECT_DATATYPE_FLOAT64);
+    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "CAMERA STATE", "", SIMCONNECT_DATATYPE_INT32);
+    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "CAMERA VIEW TYPE AND INDEX:0", "", SIMCONNECT_DATATYPE_INT32);
+    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "CAMERA VIEW TYPE AND INDEX:1", "", SIMCONNECT_DATATYPE_INT32);
+    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "COCKPIT CAMERA ZOOM", "Percentage", SIMCONNECT_DATATYPE_INT32);
+//    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "CHASE CAMERA ZOOM", "Percentage", SIMCONNECT_DATATYPE_INT32);
     std::cout << "SimConnect bridge running. Press Ctrl+C to quit. (thread " << std::this_thread::get_id() << ")" << std::endl;
 
     // Start VATSIM fetch thread
@@ -960,6 +1048,12 @@ int main() {
         hr = SimConnect_RequestDataOnSimObjectType(hSimConnect, REQUEST_AI_AIRCRAFT, DEFINITION_1, 50000, SIMCONNECT_SIMOBJECT_TYPE_AIRCRAFT);
         if (FAILED(hr)) {
             std::cerr << "Failed to request aircraft data: " << std::hex << hr << std::endl;
+            break;
+        }
+        // Request camera data every simconnect_fetch_interval_sec
+        hr = SimConnect_RequestDataOnSimObject(hSimConnect, REQUEST_CAMERA, DEFINITION_2, SIMCONNECT_OBJECT_ID_USER, SIMCONNECT_PERIOD_ONCE, 0, 0, 0, 0);
+        if (FAILED(hr)) {
+            std::cerr << "Failed to request camera data: " << std::hex << hr << std::endl;
             break;
         }
         std::unordered_set<int> seenSimObjectIds;

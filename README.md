@@ -10,6 +10,10 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 - Exposes the full aircraft JSON map via a WebSocket server on `localhost`.
 
 ## Version History
+0.6
+- Added camera position detection, served as "camera" object in websocket.
+- Added arrival (Star and Gates) detection.
+
 0.5
 - Added ES Proxy as main callsign correlation source, falling back to VATSIM data if no ES Proxy connection.
 - Added detection of depRwy and depSID.
