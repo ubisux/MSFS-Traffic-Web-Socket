@@ -57,7 +57,7 @@ void SetupAircraftMovementDefinition() {
     SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_3, "COCKPIT CAMERA ZOOM", "percentage", SIMCONNECT_DATATYPE_FLOAT64);
 
     // Define cockpit view reset (DEFINITION_4)
-    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_4, "CAMERA ACTION COCKPIT VIEW RESET", "number", SIMCONNECT_DATATYPE_INT32);
+    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_4, "CAMERA REQUEST ACTION", "number", SIMCONNECT_DATATYPE_INT32);
     
     std::cout << "Aircraft movement data definition (DEFINITION_3) set up successfully" << std::endl;
 }

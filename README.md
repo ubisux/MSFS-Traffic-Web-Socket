@@ -10,6 +10,9 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 - Exposes the full aircraft JSON map via a WebSocket server on `localhost`.
 
 ## Version History
+0.7.1
+- Fixed Camer Reset button using "CAMERA REQUEST ACTION" simvar.
+
 0.7
 - Added added aircraft object TTL to avoid JSON object being deleted when MSFS redraws simobjects.
 - Now using cockpit camera. Use with blank aircraft mod with no cockpit if required.
