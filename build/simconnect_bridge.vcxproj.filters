@@ -7,6 +7,9 @@
     <ClCompile Include="E:\MSFS\Development\Towerview\src\proxy.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
+    <ClCompile Include="E:\MSFS\Development\Towerview\src\aircraft_movement.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
     <CustomBuild Include="E:\MSFS\Development\Towerview\src\CMakeLists.txt" />

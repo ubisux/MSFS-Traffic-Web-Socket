@@ -6,8 +6,8 @@ project(simconnect_bridge)
 
 set(CMAKE_CXX_STANDARD 17)
 
-# Source files - includes proxy integration for aircraft correlation
-add_executable(simconnect_bridge simconnect_bridge.cpp proxy.cpp)
+# Source files - includes proxy integration for aircraft correlation and aircraft movement control
+add_executable(simconnect_bridge simconnect_bridge.cpp proxy.cpp aircraft_movement.cpp)
 
 # SimConnect include and library
 include_directories(${CMAKE_CURRENT_SOURCE_DIR})

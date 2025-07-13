@@ -382,6 +382,7 @@ if %errorlevel% neq 0 goto :VCEnd</Command>
   <ItemGroup>
     <ClCompile Include="E:\MSFS\Development\Towerview\src\simconnect_bridge.cpp" />
     <ClCompile Include="E:\MSFS\Development\Towerview\src\proxy.cpp" />
+    <ClCompile Include="E:\MSFS\Development\Towerview\src\aircraft_movement.cpp" />
   </ItemGroup>
   <ItemGroup />
   <ItemGroup>

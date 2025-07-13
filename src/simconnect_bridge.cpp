@@ -17,6 +17,7 @@
 #include <unordered_set>
 #include <sstream>
 #include "proxy_bridge.h"
+#include "aircraft_movement.h"
 #pragma comment(lib, "winhttp.lib")
 
 #ifndef M_PI
@@ -149,6 +150,10 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
     obj["verticalSpeed"] = static_cast<int>(data.vertical_speed);
     obj["on_ground"] = static_cast<int>(data.on_ground);
     obj["heading"] = data.heading * 180.0 / M_PI;
+    // Update last_seen timestamp
+    auto now = std::chrono::system_clock::now();
+    int64_t now_sec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    obj["last_seen"] = now_sec;
     // Initialize VATSIM/proxy fields if not present, but do not overwrite
     if (!obj.contains("callsign")) obj["callsign"] = "";
     if (!obj.contains("type")) obj["type"] = "";
@@ -167,8 +172,6 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
     if (log_obj.contains("position_history")) log_obj.erase("position_history");
     std::cout << log_obj.dump() << std::endl;
     // Add position history tracking for uncorrelated aircraft
-    auto now = std::chrono::system_clock::now();
-    int64_t now_sec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
     if (obj["callsign"].get<std::string>().empty()) {
         // Uncorrelated: update position_history
         nlohmann::json pos = {
@@ -205,6 +208,7 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
         cameraJson["aircraft_longitude"] = data.longitude;
         cameraJson["aircraft_altitude"] = data.altitude;
         cameraJson["aircraft_heading"] = data.heading * 180.0 / M_PI;
+        cameraJson["aircraft_pitch"] = -1 * data.pitch * 180.0 / M_PI;
     }
     // std::cout << "Aircraft " << object_id
     //     << ": Alt=" << data.altitude << " ft"
@@ -229,6 +233,7 @@ void PrintCameraData(const CameraData& data) {
     double aircraft_longitude = cameraJson.value("aircraft_longitude", 0.0);
     double aircraft_altitude = cameraJson.value("aircraft_altitude", 0.0);
     double aircraft_heading = cameraJson.value("aircraft_heading", 0.0);
+    double aircraft_pitch = cameraJson.value("aircraft_pitch", 0.0);
     cameraJson = {
         {"gameplay_pitch_yaw_0", data.gameplay_pitch_yaw_0 * 180.0 / M_PI},
         {"gameplay_pitch_yaw_1", data.gameplay_pitch_yaw_1 * 180.0 / M_PI},
@@ -239,7 +244,8 @@ void PrintCameraData(const CameraData& data) {
         {"aircraft_latitude", aircraft_latitude},
         {"aircraft_longitude", aircraft_longitude},
         {"aircraft_altitude", aircraft_altitude},
-        {"aircraft_heading", aircraft_heading}
+        {"aircraft_heading", aircraft_heading},
+        {"aircraft_pitch", aircraft_pitch},
     };
     std::cout << "[CAMERA] " << cameraJson.dump() << std::endl;
 }
@@ -249,6 +255,7 @@ double simconnect_fetch_interval_sec = 0.1;      // SimConnect fetch (default 0.
 double vatsim_fetch_interval_sec = 15.0;         // VATSIM fetch/correlate (default 15s)
 double vatsim_refill_interval_sec = 15.0;        // VATSIM refill (callsign-based, default 15s)
 double proxy_correlation_interval_sec = 1.0;     // Proxy correlation interval (default 1s, min 1s)
+double aircraft_ttl_seconds = 30.0;              // Aircraft TTL duration (default 10s, min 0s)
 
 // Helper to extract departure SID from route string
 std::string ExtractDepartureSID(const std::string& route) {
@@ -868,8 +875,27 @@ void HttpServerThread() {
 // Helper to remove stale aircraft from simAircraftMap
 void CleanupStaleSimObjects(const std::unordered_set<int>& seenIds) {
     std::lock_guard<std::mutex> lock(simAircraftMutex);
+    auto now = std::chrono::system_clock::now();
+    int64_t now_sec = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
+    
     for (auto it = simAircraftMap.begin(); it != simAircraftMap.end(); ) {
+        bool shouldRemove = false;
+        
         if (seenIds.find(it->first) == seenIds.end()) {
+            // Aircraft not seen in this cycle - check TTL
+            if (it->second.contains("last_seen")) {
+                int64_t last_seen = it->second["last_seen"].get<int64_t>();
+                if (now_sec - last_seen > aircraft_ttl_seconds) {
+                    shouldRemove = true;
+                }
+            } else {
+                // No last_seen timestamp - remove immediately (legacy behavior)
+                shouldRemove = true;
+            }
+        }
+        
+        if (shouldRemove) {
+            std::cout << "Removing stale aircraft " << it->first << " (TTL expired)" << std::endl;
             it = simAircraftMap.erase(it);
         } else {
             ++it;
@@ -998,6 +1024,14 @@ int main() {
     }
     if (vatsim_refill_interval_sec < 4.0) vatsim_refill_interval_sec = 4.0;
     
+    std::cout << "Enter aircraft TTL duration in seconds (default 30, min 0): ";
+    std::getline(std::cin, input);
+    if (!input.empty()) {
+        std::istringstream iss(input);
+        double val; if (iss >> val && val >= 0.0) aircraft_ttl_seconds = val;
+    }
+    if (aircraft_ttl_seconds < 0.0) aircraft_ttl_seconds = 0.0;
+    
     // Set proxy correlation interval to max of simconnect interval and 1.0 seconds
     if (simconnect_fetch_interval_sec > 1.0) {
         proxy_correlation_interval_sec = simconnect_fetch_interval_sec;
@@ -1029,6 +1063,10 @@ int main() {
     SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "CAMERA VIEW TYPE AND INDEX:1", "", SIMCONNECT_DATATYPE_INT32);
     SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "COCKPIT CAMERA ZOOM", "Percentage", SIMCONNECT_DATATYPE_INT32);
 //    SimConnect_AddToDataDefinition(hSimConnect, DEFINITION_2, "CHASE CAMERA ZOOM", "Percentage", SIMCONNECT_DATATYPE_INT32);
+    
+    // Set up aircraft movement data definition
+    SetupAircraftMovementDefinition();
+    
     std::cout << "SimConnect bridge running. Press Ctrl+C to quit. (thread " << std::this_thread::get_id() << ")" << std::endl;
 
     // Start VATSIM fetch thread
@@ -1042,6 +1080,9 @@ int main() {
 
     // Start HTTP server thread
     std::thread httpThread(HttpServerThread);
+
+    // Start aircraft movement control thread
+    std::thread aircraftMovementThread(StartAircraftMovementControl);
 
     while (!quit) {
         // Request all AI aircraft within 50km every simconnect_fetch_interval_sec
@@ -1080,6 +1121,7 @@ int main() {
     if (proxyThread.joinable()) proxyThread.join();
     if (proxyConnectionsThread.joinable()) proxyConnectionsThread.join();
     if (httpThread.joinable()) httpThread.join();
+    if (aircraftMovementThread.joinable()) aircraftMovementThread.join();
 
     SimConnect_Close(hSimConnect);
     std::cout << "SimConnect bridge closed." << std::endl;
