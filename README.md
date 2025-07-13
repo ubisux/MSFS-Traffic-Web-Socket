@@ -4,20 +4,21 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 
 ## Features
 - Polls live aircraft data from MSFS using SimConnect.
-- Fetches and parses VATSIM JSON data every 10 seconds.
-- Correlates SimConnect and VATSIM aircraft using configurable proximity logic.
+- Fetches and parses ES Proxy data and VATSIM JSON data at a configurable interval.
+- Correlates SimConnect and ES+VATSIM aircraft using proximity logic.
 - Maintains a live, thread-safe JSON map of all aircraft with both SimConnect and VATSIM fields.
-- Exposes the full aircraft JSON map via a WebSocket server on `localhost`.
+- Exposes the full correlated aircraft JSON map via a WebSocket server on localhost.
+- Exposes current user aircraft and camera via a WebSocket server on localhost.
+- Teleports user aircraft and reset camera location using SimConnect via a WebSocket server on localhost.
 
 ## Version History
 0.7.1
-- Fixed Camer Reset button using "CAMERA REQUEST ACTION" simvar.
+- Fixed Camera Reset button using "CAMERA REQUEST ACTION" simvar.
 
 0.7
 - Added added aircraft object TTL to avoid JSON object being deleted when MSFS redraws simobjects.
 - Now using cockpit camera. Use with blank aircraft mod with no cockpit if required.
 - Added injection of camera position from endpoint http://localhost:8081/move through teleporting the aircraft, triggered through button, with 3DOF position, heading, pitch, cockpit cam zoom factor. 
-- Added live sync camera position into MSFS, following global refresh rate slider
 - Added camera reset through endpoint http://localhost:8081/reset
 
 0.6
