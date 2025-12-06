@@ -2,8 +2,8 @@
 setlocal
 
 REM Clean script for simconnect_bridge
-set SRC_DIR=%~dp0
-set BUILD_DIR=%SRC_DIR%..\build
+set SRC_DIR=%~dp0\src
+set BUILD_DIR=%~dp0\build
 
 if exist "%BUILD_DIR%" (
     echo Deleting build directory: %BUILD_DIR%

@@ -1,3 +1,0 @@
-E:/MSFS/Development/Towerview/build/CMakeFiles/simconnect_bridge.dir
-E:/MSFS/Development/Towerview/build/CMakeFiles/ALL_BUILD.dir
-E:/MSFS/Development/Towerview/build/CMakeFiles/ZERO_CHECK.dir

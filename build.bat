@@ -2,8 +2,8 @@
 setlocal
 
 REM Build script for simconnect_bridge with proxy integration
-set SRC_DIR=%~dp0
-set BUILD_DIR=%SRC_DIR%..\build
+set SRC_DIR=%~dp0\src
+set BUILD_DIR=%~dp0\build
 
 if not exist "%BUILD_DIR%" mkdir "%BUILD_DIR%"
 cd /d "%BUILD_DIR%"
