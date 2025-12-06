@@ -87,7 +87,7 @@ void SetAircraftPosition(const AircraftMovementData& data) {
     HRESULT hr = SimConnect_SetDataOnSimObject(hSimConnect, DEFINITION_3, SIMCONNECT_OBJECT_ID_USER, 0, 0, sizeof(AircraftMovementData), &simconnect_data);
     
     if (SUCCEEDED(hr)) {
-        std::cout << "Aircraft position set: lat=" << data.latitude << "°, lon=" << data.longitude << "°, alt=" << data.altitude << "ft, hdg=" << data.heading << "°, zoom=" << data.cockpit_camera_zoom << std::endl;
+        // std::cout << "Aircraft position set: lat=" << data.latitude << ", lon=" << data.longitude << ", alt=" << data.altitude << "ft, hdg=" << data.heading << ", zoom=" << data.cockpit_camera_zoom << std::endl;
     } else {
         std::cerr << "Failed to set aircraft position. Error: 0x" << std::hex << hr << std::endl;
     }

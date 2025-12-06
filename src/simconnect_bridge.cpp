@@ -170,7 +170,7 @@ void PrintAircraftData(const AircraftData& data, DWORD object_id) {
     // Remove position_history from log output
     nlohmann::json log_obj = obj;
     if (log_obj.contains("position_history")) log_obj.erase("position_history");
-    std::cout << log_obj.dump() << std::endl;
+    // std::cout << log_obj.dump() << std::endl;
     // Add position history tracking for uncorrelated aircraft
     if (obj["callsign"].get<std::string>().empty()) {
         // Uncorrelated: update position_history
@@ -247,11 +247,11 @@ void PrintCameraData(const CameraData& data) {
         {"aircraft_heading", aircraft_heading},
         {"aircraft_pitch", aircraft_pitch},
     };
-    std::cout << "[CAMERA] " << cameraJson.dump() << std::endl;
+    // std::cout << "[CAMERA] " << cameraJson.dump() << std::endl;
 }
 
 // === User-configurable refresh intervals (in seconds) ===
-double simconnect_fetch_interval_sec = 0.1;      // SimConnect fetch (default 0.1s)
+double simconnect_fetch_interval_sec = 0.01;      // SimConnect fetch (default 0.1s)
 double vatsim_fetch_interval_sec = 15.0;         // VATSIM fetch/correlate (default 15s)
 double vatsim_refill_interval_sec = 15.0;        // VATSIM refill (callsign-based, default 15s)
 double proxy_correlation_interval_sec = 1.0;     // Proxy correlation interval (default 1s, min 1s)
@@ -559,7 +559,7 @@ void CorrelateProxyToSimConnect() {
         return; // Proxy not active, will fall back to VATSIM
     }
     
-    std::cout << "Proxy is active, performing proxy correlation" << std::endl;
+    // std::cout << "Proxy is active, performing proxy correlation" << std::endl;
     
     nlohmann::json proxyData = get_proxy_pilots_data();
     if (!proxyData.contains("pilots") || !proxyData["pilots"].is_array()) {
@@ -668,7 +668,7 @@ void CorrelateProxyToSimConnect() {
                     simjson.erase("position_history");
                 }
                 
-                std::cout << "Proxy Correlated: " << simjson.dump() << std::endl;
+                std::cout << "Proxy Correlated " << simjson["callsign"].get<std::string>() << " (simobjectid " << simjson["simobjectid"].get<int>() << ")" << std::endl;
             }
         }
     }
@@ -734,12 +734,13 @@ void RefillAircraftFieldsFromVatsim() {
                     }
                     
                     simjson["last_vatsim_update"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-                    std::cout << "VATSIM field refill for " << callsign << ": " << simjson.dump() << std::endl;
+                    // std::cout << "VATSIM field refill for " << ": " << simjson.dump() <<  callsign << std::endl;
                 }
                 break;
             }
         }
     }
+    std::cout << "VATSIM field refilled" << std::endl;
 }
 
 // Helper function to fetch VATSIM data
@@ -782,9 +783,9 @@ void FetchVatsimData() {
                     if (vatsimData.contains("pilots")) {
                         std::cout << "Fetched VATSIM data (thread " << std::this_thread::get_id() << ")" << std::endl;
                         // Print VATSIM update and epoch timestamp for debugging
-                        std::string update_str = vatsimData.contains("general") && vatsimData["general"].contains("update") && vatsimData["general"]["update"].is_string() ? vatsimData["general"]["update"].get<std::string>() : "";
-                        int64_t update_epoch = vatsim_update_epoch_sec.load();
-                        std::cout << "VATSIM update: " << update_str << ", update_timestamp (epoch): " << update_epoch << std::endl;
+                        std::string update_str = vatsimData.contains("general") && vatsimData["general"].contains("update_timestamp") && vatsimData["general"]["update_timestamp"].is_string() ? vatsimData["general"]["update_timestamp"].get<std::string>() : "";
+                        // int64_t update_epoch = vatsim_update_epoch_sec.load();
+                        std::cout << "VATSIM update_timestamp: " << update_str << std::endl;
                     }
                     CorrelateVatsimToSimConnect();
                 } catch (const std::exception& e) {
@@ -977,12 +978,13 @@ void RefillAircraftFieldsFromProxy() {
                     simjson["gate"] = pilot.value("gate", "");
                     simjson["transponder"] = pilot.value("transponder", "");
                     simjson["last_proxy_refill"] = std::chrono::duration_cast<std::chrono::seconds>(now.time_since_epoch()).count();
-                    std::cout << "Proxy field refill for " << callsign << ": " << simjson.dump() << std::endl;
+                    // std::cout << "Proxy field refill for " << ": " << simjson.dump() << callsign << std::endl;
                 }
                 break;
             }
         }
     }
+    std::cout << "Proxy field refilled" << std::endl;
 }
 
 int main() {
@@ -1000,45 +1002,56 @@ int main() {
     if (GetConsoleMode(hInput, &prev_mode)) {
         SetConsoleMode(hInput, prev_mode & ~ENABLE_QUICK_EDIT_MODE);
     }
-    // Prompt user for refresh intervals
-    std::cout << "Enter SimConnect fetch interval in seconds (default 0.1, min 0.1): ";
-    std::string input;
-    std::getline(std::cin, input);
-    if (!input.empty()) {
-        std::istringstream iss(input);
-        double val; if (iss >> val && val >= 0.1) simconnect_fetch_interval_sec = val;
+    
+    // Read refresh intervals from environment variables with defaults
+    char* simconnect_env = nullptr;
+    size_t len = 0;
+    if (_dupenv_s(&simconnect_env, &len, "SIMCONNECT_FETCH_INTERVAL") == 0 && simconnect_env) {
+        double val = std::atof(simconnect_env);
+        if (val >= 0.1) simconnect_fetch_interval_sec = val;
+        free(simconnect_env);
     }
-    if (simconnect_fetch_interval_sec < 0.1) simconnect_fetch_interval_sec = 0.1;
-    std::cout << "Enter VATSIM fetch/correlate interval in seconds (default 15, min 4): ";
-    std::getline(std::cin, input);
-    if (!input.empty()) {
-        std::istringstream iss(input);
-        double val; if (iss >> val && val >= 4.0) vatsim_fetch_interval_sec = val;
+    if (simconnect_fetch_interval_sec < 0.01) simconnect_fetch_interval_sec = 0.01;
+    
+    char* vatsim_fetch_env = nullptr;
+    if (_dupenv_s(&vatsim_fetch_env, &len, "VATSIM_FETCH_INTERVAL") == 0 && vatsim_fetch_env) {
+        double val = std::atof(vatsim_fetch_env);
+        if (val >= 4.0) vatsim_fetch_interval_sec = val;
+        free(vatsim_fetch_env);
     }
     if (vatsim_fetch_interval_sec < 4.0) vatsim_fetch_interval_sec = 4.0;
-    std::cout << "Enter VATSIM refill (callsign-based) interval in seconds (default 15, min 4): ";
-    std::getline(std::cin, input);
-    if (!input.empty()) {
-        std::istringstream iss(input);
-        double val; if (iss >> val && val >= 4.0) vatsim_refill_interval_sec = val;
+    
+    char* vatsim_refill_env = nullptr;
+    if (_dupenv_s(&vatsim_refill_env, &len, "VATSIM_REFILL_INTERVAL") == 0 && vatsim_refill_env) {
+        double val = std::atof(vatsim_refill_env);
+        if (val >= 4.0) vatsim_refill_interval_sec = val;
+        free(vatsim_refill_env);
     }
     if (vatsim_refill_interval_sec < 4.0) vatsim_refill_interval_sec = 4.0;
     
-    std::cout << "Enter aircraft TTL duration in seconds (default 30, min 0): ";
-    std::getline(std::cin, input);
-    if (!input.empty()) {
-        std::istringstream iss(input);
-        double val; if (iss >> val && val >= 0.0) aircraft_ttl_seconds = val;
+    char* aircraft_ttl_env = nullptr;
+    if (_dupenv_s(&aircraft_ttl_env, &len, "AIRCRAFT_TTL_SECONDS") == 0 && aircraft_ttl_env) {
+        double val = std::atof(aircraft_ttl_env);
+        if (val >= 0.0) aircraft_ttl_seconds = val;
+        free(aircraft_ttl_env);
     }
     if (aircraft_ttl_seconds < 0.0) aircraft_ttl_seconds = 0.0;
     
-    // Set proxy correlation interval to max of simconnect interval and 1.0 seconds
-    if (simconnect_fetch_interval_sec > 1.0) {
-        proxy_correlation_interval_sec = simconnect_fetch_interval_sec;
-    } else {
-        proxy_correlation_interval_sec = 1.0;
+    char* proxy_correlation_env = nullptr;
+    if (_dupenv_s(&proxy_correlation_env, &len, "PROXY_CORRELATION_INTERVAL") == 0 && proxy_correlation_env) {
+        double val = std::atof(proxy_correlation_env);
+        if (val >= 1.0) proxy_correlation_interval_sec = val;
+        free(proxy_correlation_env);
     }
-    std::cout << "Proxy correlation interval set to: " << proxy_correlation_interval_sec << " seconds" << std::endl;
+    if (proxy_correlation_interval_sec < 1.0) proxy_correlation_interval_sec = 1.0;
+    
+    // Log the configured intervals
+    std::cout << "Configuration:" << std::endl;
+    std::cout << "  SimConnect fetch interval: " << simconnect_fetch_interval_sec << " seconds" << std::endl;
+    std::cout << "  VATSIM fetch/correlate interval: " << vatsim_fetch_interval_sec << " seconds" << std::endl;
+    std::cout << "  VATSIM refill interval: " << vatsim_refill_interval_sec << " seconds" << std::endl;
+    std::cout << "  Proxy correlation interval: " << proxy_correlation_interval_sec << " seconds" << std::endl;
+    std::cout << "  Aircraft TTL: " << aircraft_ttl_seconds << " seconds" << std::endl;
     HRESULT hr = SimConnect_Open(&hSimConnect, "MSFS SimConnect Bridge", nullptr, 0, 0, 0);
     if (FAILED(hr)) {
         std::cerr << "Failed to open SimConnect: " << std::hex << hr << std::endl;
@@ -1099,7 +1112,7 @@ int main() {
         }
         std::unordered_set<int> seenSimObjectIds;
         double sleep_ms = simconnect_fetch_interval_sec * 1000.0;
-        int step = 100; // ms
+        int step = 10; // ms
         int steps = static_cast<int>(sleep_ms / step);
         double remainder = sleep_ms - (steps * step);
         for (int i = 0; i < steps && !quit; ++i) {
@@ -1112,7 +1125,7 @@ int main() {
         }
         CleanupStaleSimObjects(seenSimObjectIds);
         
-        std::cout << "SimConnect polling... (thread " << std::this_thread::get_id() << ")" << std::endl;
+        // std::cout << "SimConnect polling... (thread " << std::this_thread::get_id() << ")" << std::endl;
     }
 
     // Signal threads to quit and join

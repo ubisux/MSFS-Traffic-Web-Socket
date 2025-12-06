@@ -440,7 +440,7 @@ void start_proxy_threads(std::atomic<bool>& quit_flag) {
     std::thread t3([]() {
         while (true) {
             std::this_thread::sleep_for(std::chrono::seconds(10)); // Print every 10 seconds
-            print_pilots_data();
+            // print_pilots_data();
         }
     });
     
