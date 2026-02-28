@@ -54,7 +54,9 @@ if exist "!SHORTCUT!" (
 REM Search for Hong Kong TOPSKY profile only if not already set
 if not defined PROFILE_PATH (
 
-    if exist "%USERPROFILE%\Documents\Hong-Kong-Sector-Package\Hong Kong TOPSKY.prf" (
+    if exist "%USERPROFILE%\Documents\Hong-Kong-Sector-Package-KTOverload\Hong Kong TOPSKY.prf" (
+        set "PROFILE_PATH=%USERPROFILE%\Documents\Hong-Kong-Sector-Package-KTOverload\Hong Kong TOPSKY.prf"
+    ) else if exist "%USERPROFILE%\Documents\Hong-Kong-Sector-Package\Hong Kong TOPSKY.prf" (
         set "PROFILE_PATH=%USERPROFILE%\Documents\Hong-Kong-Sector-Package\Hong Kong TOPSKY.prf"
     ) else if exist ".\Hong Kong TOPSKY.prf" (
         set "PROFILE_PATH=.\Hong Kong TOPSKY.prf"
