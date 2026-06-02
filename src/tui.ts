@@ -94,28 +94,28 @@ export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
                   ui.table({
                     id: "ac-table",
                     columns: [
-                      { key: "callsign", header: "CS", width: 12 },
-                      { key: "type", header: "TYPE", width: 7 },
+                      { key: "callsign", header: "CS", width: 10 },
+                      { key: "type", header: "TYPE", width: 6 },
                       { key: "dep", header: "DEP", width: 6 },
                       { key: "arr", header: "DEST", width: 6 },
                       {
                         key: "distNm",
-                        header: "Dist",
-                        width: 8,
+                        header: "DIST",
+                        width: 9,
                         render: (_v: unknown, r: CorrelatedAircraftInfo) =>
                           ui.text(formatDist(r.distNm)),
                       },
-                      { key: "altitude", header: "ALT", width: 5 },
+                      { key: "altitude", header: "ALT", width: 7 },
                       { key: "heading", header: "HDG", width: 5 },
                       { key: "groundspeed", header: "GS", width: 5 },
                       {
                         key: "onGround",
-                        header: "Gnd",
+                        header: "GND",
                         width: 4,
                         render: (_v: unknown, r: CorrelatedAircraftInfo) =>
                           ui.text(r.onGround ? "Y" : "N"),
                       },
-                      { key: "scratchpad", header: "TXT", width: 8 },
+                      { key: "scratchpad", header: "TXT", width: 12 },
                     ],
                     data: aircraft,
                     getRowKey: (r: CorrelatedAircraftInfo, _i: number) =>
