@@ -1,0 +1,17 @@
+{
+  "name": "msfs-traffic-web-socket",
+  "module": "index.ts",
+  "type": "module",
+  "private": true,
+  "devDependencies": {
+    "@types/bun": "latest"
+  },
+  "peerDependencies": {
+    "typescript": "^5"
+  },
+  "dependencies": {
+    "@rezi-ui/core": "^0.1.0-alpha.72",
+    "@rezi-ui/node": "^0.1.0-alpha.72",
+    "node-simconnect": "^4.2.0"
+  }
+}

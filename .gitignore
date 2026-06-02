@@ -1,3 +1,2 @@
-/build
-/*.bin
-/.sentry-native
+/node_modules
+/*.log
