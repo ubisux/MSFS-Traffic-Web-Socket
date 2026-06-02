@@ -15,6 +15,7 @@ import {
 } from "./aircraft_movement.ts";
 import { log } from "./logger.ts";
 import {
+  euroScopeState,
   getLastProxyUpdateTime,
   getProxyPilotsData,
   hasProxyData,
@@ -112,17 +113,17 @@ let nextProxyId = 0;
 let lastSimconnectUpdateTime = 0;
 
 let cameraJson: CameraJson = {
-  gameplay_pitch_yaw_0: 0,
-  gameplay_pitch_yaw_1: 0,
-  camera_state: 0,
-  camera_view_type_and_index_0: 0,
-  camera_view_type_and_index_1: 0,
-  cockpit_camera_zoom: 0,
-  aircraft_latitude: 0,
-  aircraft_longitude: 0,
-  aircraft_altitude: 0,
-  aircraft_heading: 0,
-  aircraft_pitch: 0,
+  gameplay_pitch_yaw_0: undefined,
+  gameplay_pitch_yaw_1: undefined,
+  camera_state: undefined,
+  camera_view_type_and_index_0: undefined,
+  camera_view_type_and_index_1: undefined,
+  cockpit_camera_zoom: undefined,
+  aircraft_latitude: undefined,
+  aircraft_longitude: undefined,
+  aircraft_altitude: undefined,
+  aircraft_heading: undefined,
+  aircraft_pitch: undefined,
 };
 
 // ===== Route Parsing Helpers =====
@@ -922,6 +923,7 @@ function cleanupAircraftByTtl(): void {
     ) {
       log(
         `Removing stale aircraft ${id} (${obj.callsign || ""}) (TTL expired)`,
+        "debug",
       );
       simAircraftMap.delete(id);
     }
@@ -1260,10 +1262,20 @@ export interface CorrelatedAircraftInfo {
 }
 
 export function getCorrelatedAircraftData(): CorrelatedAircraftInfo[] {
-  const userLat = cameraJson.aircraft_latitude;
-  const userLon = cameraJson.aircraft_longitude;
-  const userAlt = cameraJson.aircraft_altitude;
-  if (userLat === 0 && userLon === 0) return [];
+  const userLat =
+    typeof cameraJson.aircraft_latitude !== "undefined"
+      ? cameraJson.aircraft_latitude
+      : euroScopeState?.lat;
+  const userLon =
+    typeof cameraJson.aircraft_longitude !== "undefined"
+      ? cameraJson.aircraft_longitude
+      : euroScopeState?.lon;
+  const userAlt =
+    typeof cameraJson.aircraft_altitude !== "undefined"
+      ? cameraJson.aircraft_altitude
+      : 0;
+  if (typeof userLat === "undefined" || typeof userLon === "undefined")
+    return [];
 
   const result: CorrelatedAircraftInfo[] = [];
   for (const [, entry] of simAircraftMap) {

@@ -25,6 +25,10 @@ function withPilotsLock<T>(fn: () => T): T {
 let lastProxyUpdateTime = 0;
 let partialMessage = "";
 
+export let euroScopeState:
+  | { callsign: string; lat: number; lon: number }
+  | undefined = undefined;
+
 function parseAircraftData(data: string): void {
   withPilotsLock(() => {
     lastProxyUpdateTime = Math.floor(Date.now() / 1000);
@@ -118,7 +122,8 @@ function parseAircraftData(data: string): void {
           if (pilot.callsign === callsign) {
             pilot.scratchpad = scratchpad;
             found = true;
-            if (debug) log(`Updated scratchpad for ${callsign} -> ${scratchpad}`);
+            if (debug)
+              log(`Updated scratchpad for ${callsign} -> ${scratchpad}`);
             break;
           }
         }
@@ -132,7 +137,8 @@ function parseAircraftData(data: string): void {
             groundspeed: 0,
             transponder: "",
           });
-          if (debug) log(`Added pilot with scratchpad: ${callsign} -> ${scratchpad}`);
+          if (debug)
+            log(`Added pilot with scratchpad: ${callsign} -> ${scratchpad}`);
         }
       }
     }
@@ -185,6 +191,24 @@ function handleConnection(
         buf = buf.slice(idx + 2);
         const clean = completeMsg.replace(/\r?\n/g, "");
         logPacket(label, clean);
+
+        // Parse client init
+        if (!euroScopeState && label === "CLIENT") {
+          const initRegex =
+            /%([A-Z_]+):\d+:\d+:\d+:\d+:(-?\d+\.\d+):(-?\d+\.\d+):\d+/;
+          const match = initRegex.exec(clean);
+          if (match) {
+            const callsign = match[1]!;
+            const lat = parseFloat(match[2]!);
+            const lon = parseFloat(match[3]!);
+            euroScopeState = { callsign, lat, lon };
+            log(
+              `Parsed client init: callsign=${euroScopeState?.callsign}, lat=${euroScopeState?.lat}, lon=${euroScopeState?.lon}`,
+            );
+          }
+        }
+
+        // Parse aircraft data
         parseAircraftData(completeMsg);
       }
       partialMessage = buf;

@@ -132,17 +132,17 @@ export interface ProxyData {
 }
 
 export interface CameraJson {
-  gameplay_pitch_yaw_0: number;
-  gameplay_pitch_yaw_1: number;
-  camera_state: number;
-  camera_view_type_and_index_0: number;
-  camera_view_type_and_index_1: number;
-  cockpit_camera_zoom: number;
-  aircraft_latitude: number;
-  aircraft_longitude: number;
-  aircraft_altitude: number;
-  aircraft_heading: number;
-  aircraft_pitch: number;
+  gameplay_pitch_yaw_0?: number;
+  gameplay_pitch_yaw_1?: number;
+  camera_state?: number;
+  camera_view_type_and_index_0?: number;
+  camera_view_type_and_index_1?: number;
+  cockpit_camera_zoom?: number;
+  aircraft_latitude?: number;
+  aircraft_longitude?: number;
+  aircraft_altitude?: number;
+  aircraft_heading?: number;
+  aircraft_pitch?: number;
 }
 
 // Data definition IDs

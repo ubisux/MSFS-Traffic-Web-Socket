@@ -41,6 +41,7 @@ export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
       header: ui.row(
         {
           width: "full",
+          gap: 2,
         },
         [
           ui.text("MSFS Traffic Bridge", { bold: true }),
