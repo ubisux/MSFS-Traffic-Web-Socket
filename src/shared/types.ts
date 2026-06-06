@@ -83,13 +83,13 @@ export interface SimAircraftEntry {
   arrSTAR: string;
   position_history?: PositionHistoryEntry[];
   last_seen?: number;
-  last_vatsim_update?: number;
+  lastFSDDataUpdate?: number;
   last_proxy_update?: number;
   last_proxy_refill?: number;
   [key: string]: unknown;
 }
 
-export interface VatsimPilot {
+export interface FSDDataPilot {
   callsign?: string;
   latitude?: number;
   longitude?: number;
@@ -107,12 +107,12 @@ export interface VatsimPilot {
   };
 }
 
-export interface VatsimResponse {
+export interface FSDDataResponse {
   general?: {
     update_timestamp?: string;
     [key: string]: unknown;
   };
-  pilots?: VatsimPilot[];
+  pilots?: FSDDataPilot[];
   [key: string]: unknown;
 }
 
@@ -170,8 +170,8 @@ export interface TuiState {
   proxyCount: number;
   proxyUpdateAgo: number;
   simconnectUpdateAgo: number;
-  vatsimUpdateAgo: number;
-  vatsimDataReceived: boolean;
+  fsdDataUpdateAgo: number;
+  fsdDataReceived: boolean;
   logKey: number;
   logsScrollTop: number;
   packetLogKey: number;

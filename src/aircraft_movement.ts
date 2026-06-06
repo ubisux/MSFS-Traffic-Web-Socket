@@ -1,15 +1,15 @@
 import {
+  RawBuffer,
   SimConnectConnection,
   SimConnectConstants,
-  RawBuffer,
 } from "node-simconnect";
+import { log } from "./loggers/logger.ts";
 import {
   DEFINITION_3,
   DEFINITION_4,
   MOVEMENT_HTTP_PORT,
   degreesToRadians,
 } from "./shared/types.ts";
-import { log } from "./logger.ts";
 
 interface AircraftMovementData {
   latitude: number;

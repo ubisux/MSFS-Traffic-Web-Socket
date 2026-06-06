@@ -1,6 +1,6 @@
 # SimConnect + VATSIM Bridge
 
-This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via SimConnect to live VATSIM data, correlates aircraft, and exposes the merged data to a browser frontend via a WebSocket server.
+This project is a TypeScript bridge that connects Microsoft Flight Simulator (MSFS) via SimConnect to live VATSIM data, correlates aircraft, and exposes the merged data to a browser frontend via a WebSocket server.
 
 ## Features
 
@@ -12,11 +12,24 @@ This project is a C++ bridge that connects Microsoft Flight Simulator (MSFS) via
 - Exposes current user aircraft and camera via a WebSocket server on localhost.
 - Teleports user aircraft and reset camera location using SimConnect via a WebSocket server on localhost.
 
+## Setup
+
+Install [bun](https://bun.com)
+
+```bash
+bun i
+bun .
+```
+
 ## Version History
+
+1.0.0-beta.1
+
+- Rewrite in TypeScript, add TUI.
 
 0.7.2
 
-- Fixed esproxy port permission issues by using dynamic port allocation
+- Fixed esproxy port permission issues by using dynamic port allocation.
 
 0.7.1
 

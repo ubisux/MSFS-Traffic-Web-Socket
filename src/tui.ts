@@ -1,10 +1,10 @@
 import { ui } from "@rezi-ui/core";
 import { createNodeApp } from "@rezi-ui/node";
-import { getLogs } from "./logger.ts";
-import { getPacketLogs } from "./proxy_packet_logger.ts";
+import type { CorrelatedAircraftInfo } from "./bridge.ts";
+import { getCorrelatedAircraftData } from "./bridge.ts";
+import { getLogs } from "./loggers/logger.ts";
+import { getPacketLogs } from "./loggers/proxy_packet_logger.ts";
 import type { TuiState } from "./shared/types.ts";
-import type { CorrelatedAircraftInfo } from "./simconnect_bridge.ts";
-import { getCorrelatedAircraftData } from "./simconnect_bridge.ts";
 
 let app: ReturnType<typeof createNodeApp<TuiState>> | null = null;
 
@@ -20,8 +20,8 @@ export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
       aircraftCorrelated: 0,
       proxyActive: false,
       proxyCount: 0,
-      vatsimUpdateAgo: 0,
-      vatsimDataReceived: false,
+      fsdDataUpdateAgo: 0,
+      fsdDataReceived: false,
       proxyUpdateAgo: 0,
       simconnectUpdateAgo: 0,
       logKey: 0,
@@ -29,6 +29,7 @@ export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
       packetLogKey: 0,
       packetLogsScrollTop: 0,
     },
+    config: { executionMode: "inline" },
   });
 
   app.view((state) => {
@@ -47,12 +48,12 @@ export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
           ui.text("MSFS Traffic Bridge", { bold: true }),
           ui.spacer({ flex: 1 }),
           ui.text(
-            "VATSIM (" +
-              state.vatsimUpdateAgo +
+            "FSD Data (" +
+              state.fsdDataUpdateAgo +
               "s) " +
-              (state.vatsimDataReceived ? "\u25CF" : "\u25CB"),
+              (state.fsdDataReceived ? "\u25CF" : "\u25CB"),
             {
-              style: { fg: state.vatsimDataReceived ? 0x00ff00 : 0xff0000 },
+              style: { fg: state.fsdDataReceived ? 0x00ff00 : 0xff0000 },
             },
           ),
           ui.text(
@@ -163,9 +164,18 @@ export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
 
   app.keys({
     q: () => process.exit(0),
+    "ctrl+c": () => process.exit(0),
   });
 
   return app;
+}
+
+export function stopTui(): void {
+  if (app) {
+    app.stop();
+    app.dispose();
+    app = null;
+  }
 }
 
 export function updateTui(partial: Partial<TuiState>): void {

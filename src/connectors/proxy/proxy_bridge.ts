@@ -1,14 +1,20 @@
 import type { AddressInfo } from "node:net";
 import * as net from "node:net";
-import { log } from "./logger.ts";
-import { logPacket } from "./proxy_packet_logger.ts";
-import type { ProxyData, ProxyPilot } from "./shared/types.ts";
-import { PROXY_HOST, PROXY_PORT } from "./shared/types.ts";
+import { log } from "../../loggers/logger.ts";
+import { logPacket } from "../../loggers/proxy_packet_logger.ts";
+import type { ProxyData, ProxyPilot } from "../../shared/types.ts";
+import { PROXY_HOST, PROXY_PORT } from "../../shared/types.ts";
+import {
+  euroScopeState,
+  lastProxyUpdateTime,
+  proxyPilots,
+  setEuroScopeState,
+  setLastProxyUpdateTime,
+} from "../../state/proxy.ts";
 
 let debug = false;
 let debugJson = false;
 
-const pilotsData: ProxyPilot[] = [];
 let pilotsMutex = false;
 function withPilotsLock<T>(fn: () => T): T {
   while (pilotsMutex) {
@@ -22,16 +28,11 @@ function withPilotsLock<T>(fn: () => T): T {
   }
 }
 
-let lastProxyUpdateTime = 0;
 let partialMessage = "";
-
-export let euroScopeState:
-  | { callsign: string; lat: number; lon: number }
-  | undefined = undefined;
 
 function parseAircraftData(data: string): void {
   withPilotsLock(() => {
-    lastProxyUpdateTime = Math.floor(Date.now() / 1000);
+    setLastProxyUpdateTime(Math.floor(Date.now() / 1000));
 
     // Regex for aircraft position data (@N: or @S: ...)
     const aircraftRegex =
@@ -69,7 +70,7 @@ function parseAircraftData(data: string): void {
               transponder,
             };
             const found = false;
-            for (const existing of pilotsData) {
+            for (const existing of proxyPilots) {
               if (existing.callsign === callsign) {
                 Object.assign(existing, pilot);
                 if (debug) log(`Updated pilot: ${callsign}`);
@@ -77,7 +78,7 @@ function parseAircraftData(data: string): void {
               }
             }
             if (!found) {
-              pilotsData.push(pilot as ProxyPilot);
+              proxyPilots.push(pilot as ProxyPilot);
               if (debug) log(`Added new pilot: ${callsign}`);
             }
           } catch (e) {
@@ -91,7 +92,7 @@ function parseAircraftData(data: string): void {
         const callsign = match[1]!;
         const gate = match[2]!;
         let found = false;
-        for (const pilot of pilotsData) {
+        for (const pilot of proxyPilots) {
           if (pilot.callsign === callsign) {
             pilot.gate = gate;
             found = true;
@@ -100,7 +101,7 @@ function parseAircraftData(data: string): void {
           }
         }
         if (!found) {
-          pilotsData.push({
+          proxyPilots.push({
             callsign,
             gate,
             latitude: 0,
@@ -118,7 +119,7 @@ function parseAircraftData(data: string): void {
         const callsign = match[1]!;
         const scratchpad = match[2]!;
         let found = false;
-        for (const pilot of pilotsData) {
+        for (const pilot of proxyPilots) {
           if (pilot.callsign === callsign) {
             pilot.scratchpad = scratchpad;
             found = true;
@@ -128,7 +129,7 @@ function parseAircraftData(data: string): void {
           }
         }
         if (!found) {
-          pilotsData.push({
+          proxyPilots.push({
             callsign,
             scratchpad,
             latitude: 0,
@@ -156,27 +157,17 @@ function handleConnection(
     sock.on("error", (err) => {
       log(`[${label}] Socket error: ${err.message}`);
       sock.destroy();
-      setTimeout(connect, 15000);
     });
 
     sock.connect(PROXY_PORT, PROXY_HOST, () => {
       const addr = sock.address() as AddressInfo;
-      log(`[${label}] Actual local port: ${addr.port}`);
-      log(`[${label}] Connected to EuroScope proxy server.`);
+      log(
+        `[${label}] Connected to EuroScope proxy server on port ${addr.port}.`,
+      );
 
-      // Send first handshake
-      log(`[${label}] Sending handshake1 (${handshake1}) on port ${addr.port}`);
+      // Handshake
       sock.write(handshake1);
-      log(`[${label}] Sent handshake: ${handshake1}`);
-
-      // Wait briefly then send second handshake
-      setTimeout(() => {
-        log(
-          `[${label}] Sending handshake2 (${handshake2}) on port ${addr.port}`,
-        );
-        sock.write(handshake2);
-        log(`[${label}] Sent handshake: ${handshake2}`);
-      }, 200);
+      sock.write(handshake2);
     });
 
     let buf = partialMessage;
@@ -201,9 +192,9 @@ function handleConnection(
             const callsign = match[1]!;
             const lat = parseFloat(match[2]!);
             const lon = parseFloat(match[3]!);
-            euroScopeState = { callsign, lat, lon };
+            setEuroScopeState({ callsign, lat, lon });
             log(
-              `Parsed client init: callsign=${euroScopeState?.callsign}, lat=${euroScopeState?.lat}, lon=${euroScopeState?.lon}`,
+              `Parsed client init: callsign=${callsign}, lat=${lat}, lon=${lon}`,
             );
           }
         }
@@ -215,7 +206,7 @@ function handleConnection(
     });
 
     sock.on("close", () => {
-      log(`[${label}] Disconnected. Retrying in 15 seconds...`);
+      // log(`[${label}] Disconnected. Retrying in 15 seconds...`);
       setTimeout(connect, 15000);
     });
   }
@@ -224,12 +215,12 @@ function handleConnection(
 
 export function getProxyPilotsData(): ProxyData {
   return withPilotsLock(() => ({
-    pilots: pilotsData.map((p) => ({ ...p })),
+    pilots: proxyPilots.map((p) => ({ ...p })),
   }));
 }
 
 export function hasProxyData(): boolean {
-  return withPilotsLock(() => pilotsData.length > 0);
+  return withPilotsLock(() => proxyPilots.length > 0);
 }
 
 export function isProxyActive(): boolean {
