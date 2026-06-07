@@ -4,6 +4,7 @@ import { log } from "../../loggers/logger.ts";
 import { logPacket } from "../../loggers/proxy_packet_logger.ts";
 import type { ProxyData, ProxyPilot } from "../../shared/types.ts";
 import { PROXY_HOST, PROXY_PORT } from "../../shared/types.ts";
+import { simAircraftMap } from "../../state/aircraft.ts";
 import {
   euroScopeState,
   lastProxyUpdateTime,
@@ -41,6 +42,8 @@ function parseAircraftData(data: string): void {
     const grpRegex = /:SC:([^:\r\n]+):GRP\/S\/([^:\r\n]+)/g;
     // Regex for scratchpad ($CQ<station>:@<digits>:SC:<callsign>:<value>)
     const scratchpadRegex = /\$CQ[^:]+:@\d+:SC:([^:]+):(.*)/g;
+    // Regex for disconnect messages (#DP(callsign):(network ID))
+    const disconnectRegex = /#DP\(?([A-Za-z0-9_]+)\)?(?::(\d+))?/g;
 
     for (const line of data.split("\n")) {
       // 1. Aircraft position parsing
@@ -69,10 +72,11 @@ function parseAircraftData(data: string): void {
               groundspeed,
               transponder,
             };
-            const found = false;
+            let found = false;
             for (const existing of proxyPilots) {
               if (existing.callsign === callsign) {
                 Object.assign(existing, pilot);
+                found = true;
                 if (debug) log(`Updated pilot: ${callsign}`);
                 break;
               }
@@ -142,6 +146,28 @@ function parseAircraftData(data: string): void {
             log(`Added pilot with scratchpad: ${callsign} -> ${scratchpad}`);
         }
       }
+
+      // 4. Disconnect parsing (#DP(callsign):(network ID))
+      while ((match = disconnectRegex.exec(line)) !== null) {
+        const callsign = match[1]!;
+        const networkId = match[2] ?? "unknown";
+        for (let i = proxyPilots.length - 1; i >= 0; i--) {
+          if (proxyPilots[i]!.callsign === callsign) {
+            proxyPilots.splice(i, 1);
+            if (debug) log(`Removed pilot from proxy list: ${callsign}`);
+            break;
+          }
+        }
+        for (const [id, entry] of simAircraftMap) {
+          if (entry.callsign === callsign) {
+            simAircraftMap.delete(id);
+            log(
+              `Removed aircraft ${id} (${callsign}) - pilot disconnected (#DP netId=${networkId})`,
+            );
+            break;
+          }
+        }
+      }
     }
   });
 }
@@ -165,9 +191,11 @@ function handleConnection(
         `[${label}] Connected to EuroScope proxy server on port ${addr.port}.`,
       );
 
-      // Handshake
+      // Handshake - delay needed between writes to ensure proxy registers both
       sock.write(handshake1);
-      sock.write(handshake2);
+      setTimeout(() => {
+        sock.write(handshake2);
+      }, 200);
     });
 
     let buf = partialMessage;

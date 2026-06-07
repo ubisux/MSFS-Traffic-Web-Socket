@@ -57,16 +57,36 @@ export function buildAircraftJson(
 // ===== Process Aircraft Data (called from event handler) =====
 export function printAircraftData(objectId: number, data: RawBuffer): void {
   S.lastSimconnectUpdateTime.value = Math.floor(Date.now() / 1000);
-  const altitude = data.readFloat64();
-  const latitude = data.readFloat64();
-  const longitude = data.readFloat64();
-  const pitch = data.readFloat64();
-  const heading = data.readFloat64();
-  const bank = data.readFloat64();
-  const onGround = data.readInt32();
-  const groundVelocity = data.readInt32();
-  const verticalSpeed = data.readInt32();
-  const title = data.readString256();
+
+  let altitude = 0;
+  let latitude = 0;
+  let longitude = 0;
+  let pitch = 0;
+  let heading = 0;
+  let bank = 0;
+  let onGround = 0;
+  let groundVelocity = 0;
+  let verticalSpeed = 0;
+  let title = "";
+
+  try {
+    altitude = data.readFloat64();
+    latitude = data.readFloat64();
+    longitude = data.readFloat64();
+    pitch = data.readFloat64();
+    heading = data.readFloat64();
+    bank = data.readFloat64();
+    onGround = data.readInt32();
+    groundVelocity = data.readInt32();
+    verticalSpeed = data.readInt32();
+    title = data.readString256();
+  } catch (err) {
+    log(
+      "Aircraft data read error: " +
+        (err instanceof Error ? err.message : String(err)),
+    );
+    return;
+  }
 
   let obj = S.simAircraftMap.get(objectId);
   if (!obj) {
@@ -180,22 +200,40 @@ export function printAircraftData(objectId: number, data: RawBuffer): void {
   }
 
   if (!obj.callsign) return;
-
-  S.cameraJson.current.aircraft_latitude = latitude;
-  S.cameraJson.current.aircraft_longitude = longitude;
-  S.cameraJson.current.aircraft_altitude = Math.round(altitude);
-  S.cameraJson.current.aircraft_heading = radiansToDegrees(heading);
-  S.cameraJson.current.aircraft_pitch = pitch;
 }
 
 // ===== Process Camera Data =====
 export function printCameraData(data: RawBuffer): void {
-  const gppYaw0 = data.readFloat64();
-  const gppYaw1 = data.readFloat64();
-  const camState = data.readInt32();
-  const camView0 = data.readInt32();
-  const camView1 = data.readInt32();
-  const cockpitZoom = data.readInt32();
+  let gppYaw0 = 0;
+  let gppYaw1 = 0;
+  let camState = 0;
+  let camView0 = 0;
+  let camView1 = 0;
+  let cockpitZoom = 0;
+  let latitude = 0;
+  let longitude = 0;
+  let altitude = 0;
+  let heading = 0;
+  let pitch = 0;
+
+  try {
+    gppYaw0 = data.readFloat64();
+    gppYaw1 = data.readFloat64();
+    camState = data.readInt32();
+    camView0 = data.readInt32();
+    camView1 = data.readInt32();
+    cockpitZoom = data.readInt32();
+    latitude = data.readFloat64();
+    longitude = data.readFloat64();
+    altitude = data.readFloat64();
+    heading = data.readFloat64();
+    pitch = data.readFloat64();
+  } catch (err) {
+    log(
+      "Camera data read error: " +
+        (err instanceof Error ? err.message : String(err)),
+    );
+  }
 
   S.cameraJson.current = {
     gameplay_pitch_yaw_0: gppYaw0,
@@ -204,11 +242,11 @@ export function printCameraData(data: RawBuffer): void {
     camera_view_type_and_index_0: camView0,
     camera_view_type_and_index_1: camView1,
     cockpit_camera_zoom: cockpitZoom,
-    aircraft_latitude: S.cameraJson.current.aircraft_latitude,
-    aircraft_longitude: S.cameraJson.current.aircraft_longitude,
-    aircraft_altitude: S.cameraJson.current.aircraft_altitude,
-    aircraft_heading: S.cameraJson.current.aircraft_heading,
-    aircraft_pitch: S.cameraJson.current.aircraft_pitch,
+    aircraft_latitude: latitude,
+    aircraft_longitude: longitude,
+    aircraft_altitude: altitude,
+    aircraft_heading: radiansToDegrees(heading),
+    aircraft_pitch: -1 * radiansToDegrees(pitch),
   };
 }
 
@@ -230,8 +268,8 @@ export function cleanupStaleSimObjects(seenIds: Set<number>): void {
     }
 
     if (shouldRemove) {
-      log(`Removing stale aircraft ${id} (TTL expired)`);
-      S.simAircraftMap.delete(id);
+      // log(`Removing stale aircraft ${id} (TTL expired)`);
+      // S.simAircraftMap.delete(id);
     }
   }
 }
@@ -256,11 +294,11 @@ export function cleanupAircraftByTtl(): void {
     }
 
     if (shouldRemove) {
-      log(
-        `Removing stale aircraft ${id} (${obj.callsign || ""}) (TTL expired)`,
-        "debug",
-      );
-      S.simAircraftMap.delete(id);
+      // log(
+      //   `Removing stale aircraft ${id} (${obj.callsign || ""}) (TTL expired)`,
+      //   "debug",
+      // );
+      // S.simAircraftMap.delete(id);
     }
   }
 }

@@ -98,6 +98,7 @@ export interface FSDDataPilot {
   transponder?: string;
   aircraft_short?: string;
   flight_plan?: {
+    aircraft?: string;
     aircraft_short?: string;
     departure?: string;
     arrival?: string;
@@ -176,4 +177,6 @@ export interface TuiState {
   logsScrollTop: number;
   packetLogKey: number;
   packetLogsScrollTop: number;
+  userLat?: number;
+  userLon?: number;
 }

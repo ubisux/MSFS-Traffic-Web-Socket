@@ -4,11 +4,13 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "lint": "oxlint",
     "start": "bun .",
     "build": "bun build --compile --minify --sourcemap --bytecode --target=bun-windows-x64 --outfile out/fsd-bridge.exe --windows-icon=app.ico ."
   },
   "devDependencies": {
-    "@types/bun": "^1.3.14"
+    "@types/bun": "^1.3.14",
+    "oxlint": "^1.68.0"
   },
   "peerDependencies": {
     "typescript": "^6.0.3"

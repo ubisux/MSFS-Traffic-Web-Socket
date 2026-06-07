@@ -12,6 +12,13 @@ function formatDist(nm: number): string {
   return `${nm.toFixed(1)}nm`;
 }
 
+function formatLatLon(lat?: number, lon?: number): string {
+  if (lat === undefined || lon === undefined) return "";
+  const latDir = lat >= 0 ? "N" : "S";
+  const lonDir = lon >= 0 ? "E" : "W";
+  return `${Math.abs(lat).toFixed(4)}°${latDir} ${Math.abs(lon).toFixed(4)}°${lonDir}`;
+}
+
 export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
   app = createNodeApp<TuiState>({
     initialState: {
@@ -156,7 +163,13 @@ export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
         ]),
       ]),
       footer: ui.statusBar({
-        left: [ui.text("q: quit")],
+        left: [
+          ui.text(
+            state.userLat !== undefined && state.userLon !== undefined
+              ? `q: quit  |  ${formatLatLon(state.userLat, state.userLon)}`
+              : "q: quit",
+          ),
+        ],
         right: [ui.text("© 2026 VATSIM Hong Kong vACC.")],
       }),
     });

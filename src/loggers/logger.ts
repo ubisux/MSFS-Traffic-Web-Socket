@@ -15,10 +15,11 @@ export function log(msg: string, level: LogLevel = "info"): void {
     level: level,
     source: "",
   };
-  appendFileSync(
-    "bridge.log",
-    `${new Date(d).toISOString()} ${msg}\n`,
-    "utf-8",
-  );
+  const line = `${new Date(d).toISOString()} ${msg}\n`;
+  try {
+    appendFileSync("bridge.log", line, "utf-8");
+  } catch {
+    process.stderr.write(`Failed to write to bridge.log: ${line}`);
+  }
   _logs = [..._logs, entry];
 }

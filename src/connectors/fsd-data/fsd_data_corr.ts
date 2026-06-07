@@ -118,6 +118,11 @@ export function correlateFSDDataToSimConnect(): void {
             typeof pilot.flight_plan.aircraft_short === "string"
           ) {
             simjson.type = pilot.flight_plan.aircraft_short;
+          } else if (
+            pilot.flight_plan?.aircraft &&
+            typeof pilot.flight_plan.aircraft === "string"
+          ) {
+            simjson.type = pilot.flight_plan.aircraft;
           } else {
             simjson.type = "";
           }
@@ -246,6 +251,11 @@ export function refillAircraftFieldsFromFSDData(): void {
             typeof pilot.flight_plan.aircraft_short === "string"
           ) {
             simjson.type = pilot.flight_plan.aircraft_short;
+          } else if (
+            pilot.flight_plan?.aircraft &&
+            typeof pilot.flight_plan.aircraft === "string"
+          ) {
+            simjson.type = pilot.flight_plan.aircraft;
           }
           if (pilot.flight_plan) {
             const fp = pilot.flight_plan;

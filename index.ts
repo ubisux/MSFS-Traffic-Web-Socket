@@ -13,6 +13,18 @@ import { log } from "./src/loggers/logger.ts";
 import * as S from "./src/state.ts";
 import { startTui } from "./src/tui.ts";
 
+process.on("uncaughtException", (err) => {
+  process.stderr.write(`UNCAUGHT EXCEPTION: ${err.stack ?? err.message}\n`);
+  process.exit(1);
+});
+
+process.on("unhandledRejection", (reason) => {
+  const msg =
+    reason instanceof Error ? reason.stack ?? reason.message : String(reason);
+  process.stderr.write(`UNHANDLED REJECTION: ${msg}\n`);
+  process.exit(1);
+});
+
 try {
   readEnvConfig();
 
@@ -53,5 +65,12 @@ try {
   log("Bridge failed to start: " + (err instanceof Error ? err.message : err));
 }
 
-const app = startTui();
-app.run();
+try {
+  const app = startTui();
+  app.run();
+} catch (err) {
+  process.stderr.write(
+    `TUI failed to start: ${err instanceof Error ? err.message : err}\n`,
+  );
+  process.exit(1);
+}

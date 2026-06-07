@@ -27,6 +27,8 @@ export function updateTuiState(): void {
     fsdDataReceived: S.fsdDataReceived.value,
     logKey: S._tuiLogKey.value,
     packetLogKey: S._tuiPacketLogKey.value,
+    userLat: S.cameraJson.current.aircraft_latitude,
+    userLon: S.cameraJson.current.aircraft_longitude,
   });
 }
 

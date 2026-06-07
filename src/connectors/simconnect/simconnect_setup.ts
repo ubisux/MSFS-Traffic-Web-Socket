@@ -121,6 +121,36 @@ function setupDataDefinitions(): void {
     "Percentage",
     sc.INT32,
   );
+  S.handle.value.addToDataDefinition(
+    DEFINITION_2,
+    "PLANE LATITUDE",
+    "degrees",
+    sc.FLOAT64,
+  );
+  S.handle.value.addToDataDefinition(
+    DEFINITION_2,
+    "PLANE LONGITUDE",
+    "degrees",
+    sc.FLOAT64,
+  );
+  S.handle.value.addToDataDefinition(
+    DEFINITION_2,
+    "PLANE ALTITUDE",
+    "ft",
+    sc.FLOAT64,
+  );
+  S.handle.value.addToDataDefinition(
+    DEFINITION_2,
+    "PLANE HEADING DEGREES TRUE",
+    "radian",
+    sc.FLOAT64,
+  );
+  S.handle.value.addToDataDefinition(
+    DEFINITION_2,
+    "PLANE PITCH DEGREES",
+    "radian",
+    sc.FLOAT64,
+  );
 
   setupAircraftMovementDefinition();
 }
