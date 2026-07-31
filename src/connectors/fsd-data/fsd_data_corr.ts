@@ -31,7 +31,13 @@ export function correlateFSDDataToSimConnect(): void {
   const now = Date.now();
 
   if (!S.fsdData.value.pilots) return;
+  const pilots = S.fsdData.value.pilots;
   const targetTs = S.fsdDataUpdateEpochSec.value;
+
+  const matchedPilotCallsigns = new Set<string>();
+  for (const [simId, entry] of S.simAircraftMap) {
+    if (simId >= 0 && entry.callsign) matchedPilotCallsigns.add(entry.callsign);
+  }
 
   for (const simId of simIds) {
     const simjson = S.simAircraftMap.get(simId);
@@ -67,8 +73,9 @@ export function correlateFSDDataToSimConnect(): void {
       let bestPilotIdx = -1;
       let bestDist = 1e9;
 
-      for (let i = 0; i < (S.fsdData.value.pilots ?? []).length; i++) {
-        const pilot = S.fsdData.value.pilots[i]!;
+      for (let i = 0; i < pilots.length; i++) {
+        const pilot = pilots[i]!;
+        if (!pilot.callsign || matchedPilotCallsigns.has(pilot.callsign)) continue;
         if (
           pilot.latitude === undefined ||
           pilot.longitude === undefined ||
@@ -152,6 +159,7 @@ export function correlateFSDDataToSimConnect(): void {
           }
           simjson.transponder = pilot.transponder ?? "";
           simjson.lastFSDDataUpdate = Math.floor(now / 1000);
+          matchedPilotCallsigns.add(simjson.callsign);
           log(`Correlated: ${JSON.stringify(simjson)}`);
         }
       } else {
@@ -160,8 +168,8 @@ export function correlateFSDDataToSimConnect(): void {
         let closestAltDiff = 0;
         let closestHdgDiff = 0;
 
-        for (let i = 0; i < (S.fsdData.value.pilots ?? []).length; i++) {
-          const pilot = S.fsdData.value.pilots[i]!;
+        for (let i = 0; i < pilots.length; i++) {
+          const pilot = pilots[i]!;
           if (
             pilot.latitude === undefined ||
             pilot.longitude === undefined ||
@@ -189,7 +197,7 @@ export function correlateFSDDataToSimConnect(): void {
         let closestCallsign = "";
         if (closestPilotIdx !== -1) {
           closestCallsign =
-            S.fsdData.value.pilots![closestPilotIdx]?.callsign ?? "";
+            pilots[closestPilotIdx]?.callsign ?? "";
         }
         log(`Not Correlated: ${JSON.stringify(simjson)}`);
         log(
@@ -201,7 +209,7 @@ export function correlateFSDDataToSimConnect(): void {
 
   // Remove aircraft whose callsign is no longer in the data
   const activeCallsigns = new Set<string>();
-  for (const p of S.fsdData.value.pilots ?? []) {
+  for (const p of pilots) {
     if (p.callsign) activeCallsigns.add(p.callsign);
   }
   for (const [id, entry] of S.simAircraftMap) {

@@ -43,6 +43,11 @@ export function correlateProxyToSimConnect(): void {
   const now = Date.now();
   const nowSec = Math.floor(now / 1000);
 
+  const matchedPilotCallsigns = new Set<string>();
+  for (const [simId, entry] of S.simAircraftMap) {
+    if (simId >= 0 && entry.callsign) matchedPilotCallsigns.add(entry.callsign);
+  }
+
   // Phase 1: Proximity match - match uncorrelated SimConnect entries to proxy pilots
   for (const simId of simIds) {
     const simjson = S.simAircraftMap.get(simId);
@@ -82,6 +87,7 @@ export function correlateProxyToSimConnect(): void {
 
     for (let i = 0; i < proxyData.pilots.length; i++) {
       const pilot = proxyData.pilots[i]!;
+      if (!pilot.callsign || matchedPilotCallsigns.has(pilot.callsign)) continue;
       if (
         pilot.latitude === undefined ||
         pilot.longitude === undefined ||
@@ -112,6 +118,7 @@ export function correlateProxyToSimConnect(): void {
     if (bestPilotIdx !== -1) {
       const pilot = proxyData.pilots[bestPilotIdx]!;
       simjson.callsign = pilot.callsign ?? "";
+      matchedPilotCallsigns.add(simjson.callsign);
       simjson.last_proxy_update = nowSec;
       if (simjson.position_history) delete simjson.position_history;
       log(

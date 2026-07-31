@@ -62,14 +62,14 @@ export function getCorrelatedAircraftData(): CorrelatedAircraftInfo[] {
   if (typeof userLat === "undefined" || typeof userLon === "undefined")
     return [];
 
-  const result: CorrelatedAircraftInfo[] = [];
+  const byCallsign = new Map<string, CorrelatedAircraftInfo>();
   for (const [, entry] of S.simAircraftMap) {
     if (!entry.callsign) continue;
 
     const distM = haversine(userLat, userLon, entry.latitude, entry.longitude);
     const distNm = distM / 1852;
 
-    result.push({
+    const aircraftInfo: CorrelatedAircraftInfo = {
       callsign: entry.callsign,
       type: entry.type || "?",
       dep: entry.dep || "?",
@@ -80,8 +80,15 @@ export function getCorrelatedAircraftData(): CorrelatedAircraftInfo[] {
       altitude: entry.altitude,
       onGround: entry.on_ground === 1,
       scratchpad: entry.scratchpad,
-    });
+    };
+
+    const existing = byCallsign.get(entry.callsign);
+    if (!existing || aircraftInfo.distNm < existing.distNm) {
+      byCallsign.set(entry.callsign, aircraftInfo);
+    }
   }
+
+  const result = Array.from(byCallsign.values());
 
   result.sort((a, b) => a.distNm - b.distNm);
   return result;
