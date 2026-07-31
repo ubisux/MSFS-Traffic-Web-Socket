@@ -147,7 +147,52 @@ function parseAircraftData(data: string): void {
         }
       }
 
-      // 4. Disconnect parsing (#DP(callsign):(network ID))
+      // 4. Flight plan parsing ($FP<callsign>:...:<type>:...:<dep>:...:<arr>:...)
+      if (line.startsWith("$FP")) {
+        const parts = line.split(":");
+        const callsign = parts[0]!.substring(3);
+        if (callsign) {
+          const aircraft = parts[3] ?? "";
+          const type = aircraft.split("/")[0] ?? aircraft;
+          const dep = parts[5] ?? "";
+          const deptime = parts[6] ?? "";
+          const arr = parts[9] ?? "";
+
+          let found = false;
+          for (const pilot of proxyPilots) {
+            if (pilot.callsign === callsign) {
+              pilot.type = type;
+              pilot.dep = dep;
+              pilot.arr = arr;
+              pilot.deptime = deptime;
+              found = true;
+              if (debug)
+                log(
+                  `Updated flight plan for ${callsign}: ${dep}-${arr} ${type}`,
+                );
+              break;
+            }
+          }
+          if (!found) {
+            proxyPilots.push({
+              callsign,
+              type,
+              dep,
+              arr,
+              deptime,
+              latitude: 0,
+              longitude: 0,
+              altitude: 0,
+              groundspeed: 0,
+              transponder: "",
+            });
+            if (debug)
+              log(`Added pilot with flight plan: ${callsign} ${dep}-${arr}`);
+          }
+        }
+      }
+
+      // 5. Disconnect parsing (#DP(callsign):(network ID))
       while ((match = disconnectRegex.exec(line)) !== null) {
         const callsign = match[1]!;
         const networkId = match[2] ?? "unknown";

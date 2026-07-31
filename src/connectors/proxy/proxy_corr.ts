@@ -120,6 +120,10 @@ export function correlateProxyToSimConnect(): void {
       simjson.callsign = pilot.callsign ?? "";
       matchedPilotCallsigns.add(simjson.callsign);
       simjson.last_proxy_update = nowSec;
+      if (pilot.type) simjson.type = pilot.type;
+      if (pilot.dep) simjson.dep = pilot.dep;
+      if (pilot.arr) simjson.arr = pilot.arr;
+      if (pilot.deptime) simjson.deptime = pilot.deptime;
       if (simjson.position_history) delete simjson.position_history;
       log(
         `Proxy Correlated ${simjson.callsign} (simobjectid ${simjson.simobjectid})`,
@@ -145,6 +149,10 @@ export function correlateProxyToSimConnect(): void {
       existing.gate = pilot.gate ?? existing.gate;
       existing.scratchpad = pilot.scratchpad ?? existing.scratchpad;
       existing.transponder = pilot.transponder ?? existing.transponder;
+      if (pilot.type) existing.type = pilot.type;
+      if (pilot.dep) existing.dep = pilot.dep;
+      if (pilot.arr) existing.arr = pilot.arr;
+      if (pilot.deptime) existing.deptime = pilot.deptime;
       existing.latitude = pilot.latitude;
       existing.longitude = pilot.longitude;
       existing.altitude = pilot.altitude;
@@ -161,13 +169,13 @@ export function correlateProxyToSimConnect(): void {
         groundspeed: pilot.groundspeed,
         verticalSpeed: 0,
         on_ground: 0,
-        type: "",
-        dep: "",
-        arr: "",
+        type: pilot.type ?? "",
+        dep: pilot.dep ?? "",
+        arr: pilot.arr ?? "",
         heading: 0,
         transponder: pilot.transponder ?? "",
         transponder_asgn: "",
-        deptime: "",
+        deptime: pilot.deptime ?? "",
         depRwy: "",
         depSID: "",
         gate: pilot.gate ?? "",
@@ -204,9 +212,7 @@ export function refillAircraftFieldsFromProxy(): void {
     const callsign = simjson.callsign;
     for (const pilot of proxyData.pilots) {
       if (pilot.callsign === callsign) {
-        const proxyFieldsEmpty =
-          (!simjson.gate || !simjson.gate) &&
-          (!simjson.transponder || !simjson.transponder);
+        const proxyFieldsEmpty = !simjson.gate && !simjson.transponder;
         const lastRefill = simjson.last_proxy_refill;
         let canUpdate = proxyFieldsEmpty;
         if (!canUpdate && lastRefill !== undefined) {
@@ -219,6 +225,10 @@ export function refillAircraftFieldsFromProxy(): void {
           simjson.transponder = pilot.transponder ?? "";
           simjson.last_proxy_refill = Math.floor(now / 1000);
         }
+        if (pilot.type && !simjson.type) simjson.type = pilot.type;
+        if (pilot.dep && !simjson.dep) simjson.dep = pilot.dep;
+        if (pilot.arr && !simjson.arr) simjson.arr = pilot.arr;
+        if (pilot.deptime && !simjson.deptime) simjson.deptime = pilot.deptime;
         break;
       }
     }

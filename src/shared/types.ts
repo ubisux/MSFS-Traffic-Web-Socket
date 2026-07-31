@@ -124,6 +124,10 @@ export interface ProxyPilot {
   altitude: number;
   groundspeed: number;
   transponder: string;
+  type?: string;
+  dep?: string;
+  arr?: string;
+  deptime?: string;
   gate?: string;
   scratchpad?: string;
 }
