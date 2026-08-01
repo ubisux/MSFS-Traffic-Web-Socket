@@ -59,6 +59,8 @@ export interface PositionHistoryEntry {
   vs: number;
 }
 
+export type ProxyCorrelationState = "tentative" | "correlated" | "stale";
+
 export interface SimAircraftEntry {
   simobjectid: number;
   callsign: string;
@@ -84,6 +86,23 @@ export interface SimAircraftEntry {
   position_history?: PositionHistoryEntry[];
   last_seen?: number;
   lastFSDDataUpdate?: number;
+  fsdCorrelationMisses?: number;
+  fsdCorrelationCandidate?: string;
+  fsdLastCorrelationEpochSec?: number;
+  fsdLatitude?: number;
+  fsdLongitude?: number;
+  fsdAltitude?: number;
+  fsdHeading?: number;
+  fsdGroundspeed?: number;
+  proxyLatitude?: number;
+  proxyLongitude?: number;
+  proxyAltitude?: number;
+  proxyGroundspeed?: number;
+  proxyCorrelationState?: ProxyCorrelationState;
+  proxyCorrelationCandidate?: string;
+  proxyCorrelationMisses?: number;
+  proxyCorrelationStreak?: number;
+  proxyLastCorrelationEpochSec?: number;
   last_proxy_update?: number;
   last_proxy_refill?: number;
   [key: string]: unknown;
@@ -95,6 +114,7 @@ export interface FSDDataPilot {
   longitude?: number;
   altitude?: number;
   heading?: number | string;
+  groundspeed?: number;
   transponder?: string;
   aircraft_short?: string;
   flight_plan?: {
@@ -130,6 +150,7 @@ export interface ProxyPilot {
   deptime?: string;
   gate?: string;
   scratchpad?: string;
+  lastPacketReceived?: number;
 }
 
 export interface ProxyData {
@@ -163,6 +184,7 @@ export const DEFINITION_4 = 4;
 export const PROXY_HOST = "127.0.0.1";
 export const PROXY_PORT = 6810;
 export const PROXY_ACTIVE_TIMEOUT_SEC = 15;
+export const PROXY_PACKET_TIMEOUT_SEC = 5;
 
 export const BRIDGE_HTTP_PORT = 8080;
 export const MOVEMENT_HTTP_PORT = 8081;

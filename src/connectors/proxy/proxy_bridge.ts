@@ -3,7 +3,7 @@ import * as net from "node:net";
 import { log } from "../../loggers/logger.ts";
 import { logPacket } from "../../loggers/proxy_packet_logger.ts";
 import type { ProxyData, ProxyPilot } from "../../shared/types.ts";
-import { PROXY_HOST, PROXY_PORT } from "../../shared/types.ts";
+import { PROXY_HOST, PROXY_PORT, PROXY_PACKET_TIMEOUT_SEC } from "../../shared/types.ts";
 import { simAircraftMap } from "../../state/aircraft.ts";
 import {
   euroScopeState,
@@ -31,9 +31,43 @@ function withPilotsLock<T>(fn: () => T): T {
 
 let partialMessage = "";
 
+export function cleanupStaleProxyPilots(nowSec = Math.floor(Date.now() / 1000)): void {
+  withPilotsLock(() => {
+    for (let i = proxyPilots.length - 1; i >= 0; i--) {
+      const pilot = proxyPilots[i]!;
+      if (
+        pilot.lastPacketReceived === undefined ||
+        nowSec - pilot.lastPacketReceived <= PROXY_PACKET_TIMEOUT_SEC
+      ) {
+        continue;
+      }
+
+      proxyPilots.splice(i, 1);
+      for (const [id, entry] of simAircraftMap) {
+        if (entry.callsign !== pilot.callsign) continue;
+
+        if (id < 0) {
+          simAircraftMap.delete(id);
+          log(
+            `Removed proxy-only aircraft ${id} (${pilot.callsign}) - no proxy packet for ${PROXY_PACKET_TIMEOUT_SEC} seconds`,
+          );
+        } else {
+          entry.proxyCorrelationState = "stale";
+          entry.proxyCorrelationMisses = (entry.proxyCorrelationMisses ?? 0) + 1;
+          entry.proxyCorrelationStreak = 0;
+          log(
+            `Marked aircraft ${id} (${pilot.callsign}) proxy stale - no proxy packet for ${PROXY_PACKET_TIMEOUT_SEC} seconds`,
+          );
+        }
+      }
+    }
+  });
+}
+
 function parseAircraftData(data: string): void {
   withPilotsLock(() => {
-    setLastProxyUpdateTime(Math.floor(Date.now() / 1000));
+    const nowSec = Math.floor(Date.now() / 1000);
+    setLastProxyUpdateTime(nowSec);
 
     // Regex for aircraft position data (@N: or @S: ...)
     const aircraftRegex =
@@ -71,6 +105,7 @@ function parseAircraftData(data: string): void {
               altitude,
               groundspeed,
               transponder,
+              lastPacketReceived: nowSec,
             };
             let found = false;
             for (const existing of proxyPilots) {
@@ -204,13 +239,22 @@ function parseAircraftData(data: string): void {
           }
         }
         for (const [id, entry] of simAircraftMap) {
-          if (entry.callsign === callsign) {
+          if (entry.callsign !== callsign) continue;
+
+          if (id < 0) {
             simAircraftMap.delete(id);
             log(
-              `Removed aircraft ${id} (${callsign}) - pilot disconnected (#DP netId=${networkId})`,
+              `Removed proxy-only aircraft ${id} (${callsign}) - pilot disconnected (#DP netId=${networkId})`,
             );
-            break;
+          } else {
+            entry.proxyCorrelationState = "stale";
+            entry.proxyCorrelationMisses = (entry.proxyCorrelationMisses ?? 0) + 1;
+            entry.proxyCorrelationStreak = 0;
+            log(
+              `Marked aircraft ${id} (${callsign}) proxy stale - pilot disconnected (#DP netId=${networkId})`,
+            );
           }
+          break;
         }
       }
     }

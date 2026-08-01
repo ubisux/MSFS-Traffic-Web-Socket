@@ -3,6 +3,55 @@ import type { SimAircraftEntry } from "./shared/types.ts";
 import { BRIDGE_HTTP_PORT } from "./shared/types.ts";
 import * as S from "./state.ts";
 
+type ApiAircraftEntry = Omit<SimAircraftEntry, "position_history" | "lastFSDDataUpdate" | "fsdCorrelationMisses" | "fsdCorrelationCandidate" | "fsdLastCorrelationEpochSec" | "fsdLatitude" | "fsdLongitude" | "fsdAltitude" | "fsdHeading" | "fsdGroundspeed" | "proxyLatitude" | "proxyLongitude" | "proxyAltitude" | "proxyGroundspeed" | "proxyCorrelationState" | "proxyCorrelationCandidate" | "proxyCorrelationMisses" | "proxyCorrelationStreak" | "proxyLastCorrelationEpochSec">;
+
+function toApiAircraftEntry(obj: SimAircraftEntry): ApiAircraftEntry {
+  const {
+    position_history: _positionHistory,
+    lastFSDDataUpdate: _lastFSDDataUpdate,
+    fsdCorrelationMisses: _fsdCorrelationMisses,
+    fsdCorrelationCandidate: _fsdCorrelationCandidate,
+    fsdLastCorrelationEpochSec: _fsdLastCorrelationEpochSec,
+    fsdLatitude,
+    fsdLongitude,
+    fsdAltitude,
+    fsdHeading,
+    fsdGroundspeed,
+    proxyLatitude,
+    proxyLongitude,
+    proxyAltitude,
+    proxyGroundspeed,
+    proxyCorrelationState: _proxyCorrelationState,
+    proxyCorrelationCandidate: _proxyCorrelationCandidate,
+    proxyCorrelationMisses: _proxyCorrelationMisses,
+    proxyCorrelationStreak: _proxyCorrelationStreak,
+    proxyLastCorrelationEpochSec: _proxyLastCorrelationEpochSec,
+    ...apiEntry
+  } = obj;
+
+  if (!Number.isFinite(apiEntry.latitude)) {
+    if (typeof proxyLatitude === "number") apiEntry.latitude = proxyLatitude;
+    else if (typeof fsdLatitude === "number") apiEntry.latitude = fsdLatitude;
+  }
+  if (!Number.isFinite(apiEntry.longitude)) {
+    if (typeof proxyLongitude === "number") apiEntry.longitude = proxyLongitude;
+    else if (typeof fsdLongitude === "number") apiEntry.longitude = fsdLongitude;
+  }
+  if (!Number.isFinite(apiEntry.altitude)) {
+    if (typeof proxyAltitude === "number") apiEntry.altitude = proxyAltitude;
+    else if (typeof fsdAltitude === "number") apiEntry.altitude = fsdAltitude;
+  }
+  if (!Number.isFinite(apiEntry.heading) && typeof fsdHeading === "number") {
+    apiEntry.heading = fsdHeading;
+  }
+  if (!Number.isFinite(apiEntry.groundspeed)) {
+    if (typeof proxyGroundspeed === "number") apiEntry.groundspeed = proxyGroundspeed;
+    else if (typeof fsdGroundspeed === "number") apiEntry.groundspeed = fsdGroundspeed;
+  }
+
+  return apiEntry;
+}
+
 // ===== HTTP Server =====
 export function httpServerThread(): void {
   try {
@@ -21,10 +70,10 @@ export function httpServerThread(): void {
         }
 
         if (req.method === "GET" && url.pathname === "/aircraft") {
-          const arr: SimAircraftEntry[] = [];
+          const arr: ApiAircraftEntry[] = [];
           for (const [, obj] of S.simAircraftMap) {
             if (obj.callsign) {
-              arr.push(obj);
+              arr.push(toApiAircraftEntry(obj));
             }
           }
           const response = { aircraft: arr, camera: S.cameraJson.current };

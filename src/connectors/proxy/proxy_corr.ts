@@ -4,7 +4,7 @@ import {
   proxyCorrelationIntervalSec,
 } from "../../config.ts";
 import { log } from "../../loggers/logger.ts";
-import type { SimAircraftEntry } from "../../shared/types.ts";
+import type { ProxyPilot, SimAircraftEntry } from "../../shared/types.ts";
 import { haversine } from "../../shared/types.ts";
 import * as S from "../../state.ts";
 import { nextProxyId } from "../../state/proxy.ts";
@@ -12,12 +12,34 @@ import {
   getProxyPilotsData,
   hasProxyData,
   isProxyActive,
+  cleanupStaleProxyPilots,
 } from "./proxy_bridge.ts";
 
 // ===== Proxy Correlation =====
 
+const PROXY_CORRELATION_PROMOTE_STREAK = 2;
+const PROXY_CORRELATION_SWITCH_MISSES = 3;
+
+interface ProxyMatchCandidate {
+  pilot: ProxyPilot;
+  simId: number;
+  entry: SimAircraftEntry;
+  dist2d: number;
+  altDiff: number;
+  score: number;
+}
+
+interface SimSnapshot {
+  lat: number;
+  lon: number;
+  alt: number;
+  gs: number;
+  onGround: number;
+}
+
 export function proxyCorrLoop(): void {
   if (S.shouldExit.value) return;
+  cleanupStaleProxyPilots();
   correlateProxyToSimConnect();
   refillAircraftFieldsFromProxy();
   cleanupAircraftByTtl();
@@ -25,6 +47,226 @@ export function proxyCorrLoop(): void {
     proxyCorrLoop,
     proxyCorrelationIntervalSec * 1000,
   );
+}
+
+function getSimSnapshot(entry: SimAircraftEntry): SimSnapshot {
+  return {
+    lat: entry.latitude,
+    lon: entry.longitude,
+    alt: entry.altitude,
+    gs: entry.groundspeed,
+    onGround: entry.on_ground,
+  };
+}
+
+function proxyCorrelationRadius(snapshot: SimSnapshot): number {
+  if (snapshot.onGround === 1 || snapshot.gs < 30) {
+    const minRadiusM = 15.0 * 0.3048;
+    const radius = 2.0 * snapshot.gs;
+    return radius < minRadiusM ? minRadiusM : radius;
+  }
+  return 4.0 * snapshot.gs;
+}
+
+function evaluateProxyMatch(
+  pilot: ProxyPilot,
+  simId: number,
+  entry: SimAircraftEntry,
+): ProxyMatchCandidate | undefined {
+  const snapshot = getSimSnapshot(entry);
+  const dist2d = haversine(
+    snapshot.lat,
+    snapshot.lon,
+    pilot.latitude,
+    pilot.longitude,
+  );
+  const altDiff = Math.abs(snapshot.alt - pilot.altitude);
+  const radius = proxyCorrelationRadius(snapshot);
+  const altOk = snapshot.onGround === 1 || snapshot.gs < 30
+    ? altDiff <= 30.0
+    : altDiff <= 100.0;
+
+  if (dist2d >= radius || !altOk) return undefined;
+
+  return {
+    pilot,
+    simId,
+    entry,
+    dist2d,
+    altDiff,
+    score: dist2d + altDiff * 2.0,
+  };
+}
+
+function markProxyCorrelationMiss(entry: SimAircraftEntry): void {
+  entry.proxyCorrelationState = "stale";
+  entry.proxyCorrelationMisses = (entry.proxyCorrelationMisses ?? 0) + 1;
+  entry.proxyCorrelationStreak = 0;
+}
+
+function applyProxyPilotToSimAircraft(
+  entry: SimAircraftEntry,
+  pilot: ProxyPilot,
+  nowSec: number,
+): void {
+  entry.callsign = pilot.callsign;
+  entry.proxyLatitude = pilot.latitude;
+  entry.proxyLongitude = pilot.longitude;
+  entry.proxyAltitude = pilot.altitude;
+  entry.proxyGroundspeed = pilot.groundspeed;
+  entry.last_proxy_update = nowSec;
+  entry.fsdLastCorrelationEpochSec = undefined;
+  entry.gate = pilot.gate ?? entry.gate;
+  entry.scratchpad = pilot.scratchpad ?? entry.scratchpad;
+  entry.transponder = pilot.transponder ?? entry.transponder;
+  if (pilot.type) entry.type = pilot.type;
+  if (pilot.dep) entry.dep = pilot.dep;
+  if (pilot.arr) entry.arr = pilot.arr;
+  if (pilot.deptime) entry.deptime = pilot.deptime;
+
+  if (entry.simobjectid < 0) {
+    entry.latitude = pilot.latitude;
+    entry.longitude = pilot.longitude;
+    entry.altitude = pilot.altitude;
+    entry.groundspeed = pilot.groundspeed;
+  }
+}
+
+function refreshProxyCorrelation(
+  entry: SimAircraftEntry,
+  pilot: ProxyPilot,
+  nowSec: number,
+): void {
+  applyProxyPilotToSimAircraft(entry, pilot, nowSec);
+  entry.proxyCorrelationCandidate = pilot.callsign;
+  entry.proxyCorrelationMisses = 0;
+  entry.proxyCorrelationStreak = (entry.proxyCorrelationStreak ?? 0) + 1;
+  entry.proxyLastCorrelationEpochSec = nowSec;
+  entry.proxyCorrelationState = entry.proxyCorrelationStreak >=
+      PROXY_CORRELATION_PROMOTE_STREAK
+    ? "correlated"
+    : "tentative";
+}
+
+function findEntryByCallsign(callsign: string): [number, SimAircraftEntry] | undefined {
+  for (const [id, entry] of S.simAircraftMap) {
+    if (entry.callsign === callsign) return [id, entry];
+  }
+  return undefined;
+}
+
+function revalidateExistingProxyCorrelations(
+  pilots: ProxyPilot[],
+  simIds: number[],
+  assignedCallsigns: Set<string>,
+  assignedSimIds: Set<number>,
+  nowSec: number,
+): void {
+  const pilotsByCallsign = new Map(pilots.map((pilot) => [pilot.callsign, pilot]));
+
+  for (const simId of simIds) {
+    if (simId < 0) continue;
+
+    const entry = S.simAircraftMap.get(simId);
+    if (!entry?.callsign) continue;
+
+    const pilot = pilotsByCallsign.get(entry.callsign);
+    if (!pilot || pilot.lastPacketReceived === undefined) {
+      markProxyCorrelationMiss(entry);
+      continue;
+    }
+
+    const candidate = evaluateProxyMatch(pilot, simId, entry);
+    if (!candidate) {
+      markProxyCorrelationMiss(entry);
+      continue;
+    }
+
+    refreshProxyCorrelation(entry, pilot, nowSec);
+    assignedCallsigns.add(pilot.callsign);
+    assignedSimIds.add(simId);
+  }
+}
+
+function canAssignEntry(entry: SimAircraftEntry, pilot: ProxyPilot): boolean {
+  if (!entry.callsign) return true;
+  if (entry.callsign === pilot.callsign) return true;
+
+  return (entry.proxyCorrelationMisses ?? 0) >= PROXY_CORRELATION_SWITCH_MISSES;
+}
+
+function handleExistingCallsignOwner(
+  candidate: ProxyMatchCandidate,
+  nowSec: number,
+): boolean {
+  const existing = findEntryByCallsign(candidate.pilot.callsign);
+  if (!existing || existing[0] === candidate.simId) return true;
+
+  const [existingId, existingEntry] = existing;
+  if (existingId < 0) {
+    S.simAircraftMap.delete(existingId);
+    return true;
+  }
+
+  const existingSwitchable =
+    (existingEntry.proxyCorrelationMisses ?? 0) >= PROXY_CORRELATION_SWITCH_MISSES ||
+    existingEntry.proxyCorrelationState === "stale";
+  if (!existingSwitchable) return false;
+
+  markProxyCorrelationMiss(existingEntry);
+  existingEntry.callsign = "";
+  existingEntry.proxyCorrelationCandidate = undefined;
+  existingEntry.proxyLastCorrelationEpochSec = nowSec;
+  return true;
+}
+
+function correlateFreshProxyPacketsToNearestSimConnect(
+  pilots: ProxyPilot[],
+  simIds: number[],
+  assignedCallsigns: Set<string>,
+  assignedSimIds: Set<number>,
+  nowSec: number,
+): void {
+  const candidates: ProxyMatchCandidate[] = [];
+
+  for (const pilot of pilots) {
+    if (!pilot.callsign || pilot.lastPacketReceived === undefined) continue;
+    if (assignedCallsigns.has(pilot.callsign)) continue;
+
+    for (const simId of simIds) {
+      if (assignedSimIds.has(simId)) continue;
+
+      const entry = S.simAircraftMap.get(simId);
+      if (!entry || simId < 0 || !canAssignEntry(entry, pilot)) continue;
+
+      const candidate = evaluateProxyMatch(pilot, simId, entry);
+      if (candidate) candidates.push(candidate);
+    }
+  }
+
+  candidates.sort((a, b) => a.score - b.score);
+
+  for (const candidate of candidates) {
+    const callsign = candidate.pilot.callsign;
+    if (assignedCallsigns.has(callsign) || assignedSimIds.has(candidate.simId)) {
+      continue;
+    }
+    if (!canAssignEntry(candidate.entry, candidate.pilot)) continue;
+    if (!handleExistingCallsignOwner(candidate, nowSec)) continue;
+
+    const previousCallsign = candidate.entry.callsign;
+    assignedCallsigns.add(callsign);
+    assignedSimIds.add(candidate.simId);
+
+    refreshProxyCorrelation(candidate.entry, candidate.pilot, nowSec);
+
+    log(
+      previousCallsign && previousCallsign !== callsign
+        ? `Proxy re-correlated ${candidate.simId}: ${previousCallsign} -> ${callsign} (dist2d=${candidate.dist2d}m, alt_diff=${candidate.altDiff}ft)`
+        : `Proxy correlated ${callsign} (simobjectid ${candidate.simId}, dist2d=${candidate.dist2d}m, alt_diff=${candidate.altDiff}ft)`,
+      "debug",
+    );
+  }
 }
 
 export function correlateProxyToSimConnect(): void {
@@ -40,124 +282,33 @@ export function correlateProxyToSimConnect(): void {
   if (!proxyData.pilots || proxyData.pilots.length === 0) return;
 
   const simIds = Array.from(S.simAircraftMap.keys());
-  const now = Date.now();
-  const nowSec = Math.floor(now / 1000);
+  const nowSec = Math.floor(Date.now() / 1000);
+  const assignedCallsigns = new Set<string>();
+  const assignedSimIds = new Set<number>();
 
-  const matchedPilotCallsigns = new Set<string>();
-  for (const [simId, entry] of S.simAircraftMap) {
-    if (simId >= 0 && entry.callsign) matchedPilotCallsigns.add(entry.callsign);
-  }
+  revalidateExistingProxyCorrelations(
+    proxyData.pilots,
+    simIds,
+    assignedCallsigns,
+    assignedSimIds,
+    nowSec,
+  );
 
-  // Phase 1: Proximity match - match uncorrelated SimConnect entries to proxy pilots
-  for (const simId of simIds) {
-    const simjson = S.simAircraftMap.get(simId);
-    if (!simjson) continue;
-    if (simjson.callsign) continue;
+  correlateFreshProxyPacketsToNearestSimConnect(
+    proxyData.pilots,
+    simIds,
+    assignedCallsigns,
+    assignedSimIds,
+    nowSec,
+  );
 
-    let slat: number, slon: number, salt: number;
-    let sgs: number, onGround: number;
-
-    if (simjson.position_history && simjson.position_history.length > 0) {
-      const latest =
-        simjson.position_history[simjson.position_history.length - 1]!;
-      slat = latest.lat;
-      slon = latest.lon;
-      salt = latest.alt;
-      sgs = latest.gs;
-      onGround = latest.gnd;
-    } else {
-      slat = simjson.latitude;
-      slon = simjson.longitude;
-      salt = simjson.altitude;
-      sgs = simjson.groundspeed;
-      onGround = simjson.on_ground;
-    }
-
-    let radius = 500.0;
-    if (onGround === 1 || sgs < 30) {
-      const minRadiusM = 15.0 * 0.3048;
-      radius = 2.0 * sgs;
-      if (radius < minRadiusM) radius = minRadiusM;
-    } else {
-      radius = 4.0 * sgs;
-    }
-
-    let bestPilotIdx = -1;
-    let bestDist = 1e9;
-
-    for (let i = 0; i < proxyData.pilots.length; i++) {
-      const pilot = proxyData.pilots[i]!;
-      if (!pilot.callsign || matchedPilotCallsigns.has(pilot.callsign)) continue;
-      if (
-        pilot.latitude === undefined ||
-        pilot.longitude === undefined ||
-        pilot.altitude === undefined
-      )
-        continue;
-
-      const plat = pilot.latitude;
-      const plon = pilot.longitude;
-      const palt = pilot.altitude;
-
-      const dist2d = haversine(slat, slon, plat, plon);
-      const altDiff = Math.abs(salt - palt);
-
-      let altOk = false;
-      if (onGround === 1 || sgs < 30) {
-        altOk = altDiff <= 30.0;
-      } else {
-        altOk = altDiff <= 100.0;
-      }
-
-      if (dist2d < radius && dist2d < bestDist && altOk) {
-        bestDist = dist2d;
-        bestPilotIdx = i;
-      }
-    }
-
-    if (bestPilotIdx !== -1) {
-      const pilot = proxyData.pilots[bestPilotIdx]!;
-      simjson.callsign = pilot.callsign ?? "";
-      matchedPilotCallsigns.add(simjson.callsign);
-      simjson.last_proxy_update = nowSec;
-      if (pilot.type) simjson.type = pilot.type;
-      if (pilot.dep) simjson.dep = pilot.dep;
-      if (pilot.arr) simjson.arr = pilot.arr;
-      if (pilot.deptime) simjson.deptime = pilot.deptime;
-      if (simjson.position_history) delete simjson.position_history;
-      log(
-        `Proxy Correlated ${simjson.callsign} (simobjectid ${simjson.simobjectid})`,
-        "debug",
-      );
-    }
-  }
-
-  // Phase 2: Proxy pilot sync - create entries for unmatched proxy pilots and update existing ones
+  // Proxy pilot sync - create entries for unmatched proxy pilots and update proxy-only ones
   for (const pilot of proxyData.pilots) {
-    if (!pilot.callsign) continue;
+    if (!pilot.callsign || pilot.lastPacketReceived === undefined) continue;
 
-    let existing: SimAircraftEntry | undefined;
-
-    for (const [, entry] of S.simAircraftMap) {
-      if (entry.callsign === pilot.callsign) {
-        existing = entry;
-        break;
-      }
-    }
-
+    const existing = findEntryByCallsign(pilot.callsign);
     if (existing) {
-      existing.gate = pilot.gate ?? existing.gate;
-      existing.scratchpad = pilot.scratchpad ?? existing.scratchpad;
-      existing.transponder = pilot.transponder ?? existing.transponder;
-      if (pilot.type) existing.type = pilot.type;
-      if (pilot.dep) existing.dep = pilot.dep;
-      if (pilot.arr) existing.arr = pilot.arr;
-      if (pilot.deptime) existing.deptime = pilot.deptime;
-      existing.latitude = pilot.latitude;
-      existing.longitude = pilot.longitude;
-      existing.altitude = pilot.altitude;
-      existing.groundspeed = pilot.groundspeed;
-      existing.last_proxy_update = nowSec;
+      if (existing[0] < 0) refreshProxyCorrelation(existing[1], pilot, nowSec);
     } else {
       const id = nextProxyId.value--;
       const entry: SimAircraftEntry = {
@@ -182,13 +333,22 @@ export function correlateProxyToSimConnect(): void {
         scratchpad: pilot.scratchpad ?? "",
         arrRwy: "",
         arrSTAR: "",
+        proxyLatitude: pilot.latitude,
+        proxyLongitude: pilot.longitude,
+        proxyAltitude: pilot.altitude,
+        proxyGroundspeed: pilot.groundspeed,
+        proxyCorrelationState: "tentative",
+        proxyCorrelationCandidate: pilot.callsign,
+        proxyCorrelationMisses: 0,
+        proxyCorrelationStreak: 1,
+        proxyLastCorrelationEpochSec: nowSec,
         last_proxy_update: nowSec,
       };
       S.simAircraftMap.set(id, entry);
     }
   }
 
-  // Phase 3: Cleanup stale proxy-only entries
+  // Cleanup stale proxy-only entries
   const activeProxyCallsigns = new Set(proxyData.pilots.map((p) => p.callsign));
   for (const [simId, entry] of S.simAircraftMap) {
     if (simId >= 0) continue;

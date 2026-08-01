@@ -13,10 +13,13 @@ export function updateTuiState(): void {
   S._tuiLogKey.value++;
   S._tuiPacketLogKey.value++;
   const now = Math.floor(Date.now() / 1000);
+  const aircraftCorrelated = Array.from(S.simAircraftMap.values()).filter(
+    (entry) => entry.callsign,
+  ).length;
   updateTui({
     connected: S.simconnectConnected.value,
     aircraftCount: S.simAircraftMap.size,
-    aircraftCorrelated: S.simAircraftMap.size,
+    aircraftCorrelated,
     proxyActive: isProxyActive(),
     proxyCount: getProxyPilotsData().pilots.length,
     proxyUpdateAgo: now - getLastProxyUpdateTime(),
@@ -34,7 +37,9 @@ export function updateTuiState(): void {
 
 // ===== Correlated aircraft data =====
 export interface CorrelatedAircraftInfo {
+  id: number;
   callsign: string;
+  correlationStatus: string;
   type: string;
   dep: string;
   arr: string;
@@ -46,6 +51,11 @@ export interface CorrelatedAircraftInfo {
   scratchpad: string;
 }
 
+function formatCorrelationStatus(entry: { callsign: string; proxyCorrelationState?: string }): string {
+  if (!entry.callsign) return "uncorr";
+  return entry.proxyCorrelationState ?? "called";
+}
+
 export function getCorrelatedAircraftData(): CorrelatedAircraftInfo[] {
   const userLat =
     typeof S.cameraJson.current.aircraft_latitude !== "undefined"
@@ -55,22 +65,18 @@ export function getCorrelatedAircraftData(): CorrelatedAircraftInfo[] {
     typeof S.cameraJson.current.aircraft_longitude !== "undefined"
       ? S.cameraJson.current.aircraft_longitude
       : euroScopeState?.lon;
-  const userAlt =
-    typeof S.cameraJson.current.aircraft_altitude !== "undefined"
-      ? S.cameraJson.current.aircraft_altitude
-      : 0;
   if (typeof userLat === "undefined" || typeof userLon === "undefined")
     return [];
 
-  const byCallsign = new Map<string, CorrelatedAircraftInfo>();
-  for (const [, entry] of S.simAircraftMap) {
-    if (!entry.callsign) continue;
-
+  const byKey = new Map<string, CorrelatedAircraftInfo>();
+  for (const [id, entry] of S.simAircraftMap) {
     const distM = haversine(userLat, userLon, entry.latitude, entry.longitude);
     const distNm = distM / 1852;
 
     const aircraftInfo: CorrelatedAircraftInfo = {
-      callsign: entry.callsign,
+      id,
+      callsign: entry.callsign || `#${id}`,
+      correlationStatus: formatCorrelationStatus(entry),
       type: entry.type || "?",
       dep: entry.dep || "?",
       arr: entry.arr || "?",
@@ -82,13 +88,14 @@ export function getCorrelatedAircraftData(): CorrelatedAircraftInfo[] {
       scratchpad: entry.scratchpad,
     };
 
-    const existing = byCallsign.get(entry.callsign);
+    const key = entry.callsign || `id:${id}`;
+    const existing = byKey.get(key);
     if (!existing || aircraftInfo.distNm < existing.distNm) {
-      byCallsign.set(entry.callsign, aircraftInfo);
+      byKey.set(key, aircraftInfo);
     }
   }
 
-  const result = Array.from(byCallsign.values());
+  const result = Array.from(byKey.values());
 
   result.sort((a, b) => a.distNm - b.distNm);
   return result;

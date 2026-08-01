@@ -10,15 +10,13 @@ import {
   extractDepartureSID,
   parseIso8601ToEpochSec,
 } from "../../parsers.ts";
-import type { FSDDataResponse } from "../../shared/types.ts";
-import { haversine } from "../../shared/types.ts";
+import type { FSDDataPilot, FSDDataResponse, SimAircraftEntry } from "../../shared/types.ts";
 import * as S from "../../state.ts";
 
-// ===== FSD Data Correlation =====
+// ===== FSD Data =====
 export async function fsdDataLoop(): Promise<void> {
   if (S.shouldExit.value) return;
   await fetchFsdData();
-  correlateFSDDataToSimConnect();
   refillAircraftFieldsFromFSDData();
   S.fsdDataTimer.value = setTimeout(
     fsdDataLoop,
@@ -26,209 +24,73 @@ export async function fsdDataLoop(): Promise<void> {
   );
 }
 
-export function correlateFSDDataToSimConnect(): void {
-  const simIds = Array.from(S.simAircraftMap.keys());
-  const now = Date.now();
-
-  if (!S.fsdData.value.pilots) return;
-  const pilots = S.fsdData.value.pilots;
-  const targetTs = S.fsdDataUpdateEpochSec.value;
-
-  const matchedPilotCallsigns = new Set<string>();
-  for (const [simId, entry] of S.simAircraftMap) {
-    if (simId >= 0 && entry.callsign) matchedPilotCallsigns.add(entry.callsign);
-  }
-
-  for (const simId of simIds) {
-    const simjson = S.simAircraftMap.get(simId);
-    if (!simjson) continue;
-
-    if (
-      !simjson.callsign &&
-      simjson.position_history &&
-      simjson.position_history.length > 0
-    ) {
-      const history = simjson.position_history;
-
-      const exactEntry = history.find((e) => e.timestamp === targetTs);
-      if (!exactEntry) continue;
-
-      const slat = exactEntry.lat;
-      const slon = exactEntry.lon;
-      const salt = exactEntry.alt;
-      const shdg = exactEntry.hdg;
-      const sgs = exactEntry.gs;
-      const onGround = exactEntry.gnd;
-      const svs = exactEntry.vs;
-
-      let radius = 500.0;
-      if (onGround === 1 || sgs < 30) {
-        const minRadiusM = 15.0 * 0.3048;
-        radius = 2.0 * sgs;
-        if (radius < minRadiusM) radius = minRadiusM;
-      } else {
-        radius = 4.0 * sgs;
-      }
-
-      let bestPilotIdx = -1;
-      let bestDist = 1e9;
-
-      for (let i = 0; i < pilots.length; i++) {
-        const pilot = pilots[i]!;
-        if (!pilot.callsign || matchedPilotCallsigns.has(pilot.callsign)) continue;
-        if (
-          pilot.latitude === undefined ||
-          pilot.longitude === undefined ||
-          pilot.altitude === undefined ||
-          pilot.heading === undefined
-        )
-          continue;
-        const vlat = pilot.latitude;
-        const vlon = pilot.longitude;
-        const valt = pilot.altitude;
-        const vhdg = typeof pilot.heading === "number" ? pilot.heading : 0;
-        const dist2d = haversine(slat, slon, vlat, vlon);
-        const altDiff = Math.abs(salt - valt);
-
-        let altOk = false;
-        if (onGround === 1 || sgs < 30) {
-          altOk = altDiff <= 30.0;
-        } else {
-          const altLimit = svs !== 0 ? (4.0 * Math.abs(svs)) / 60.0 : 100.0;
-          altOk = altDiff <= altLimit;
-        }
-
-        if (dist2d < radius && dist2d < bestDist && altOk) {
-          bestDist = dist2d;
-          bestPilotIdx = i;
-        }
-      }
-
-      if (bestPilotIdx !== -1) {
-        const pilot = S.fsdData.value.pilots![bestPilotIdx]!;
-        const fsdDataFieldsEmpty = !simjson.callsign;
-        const lastUpdate = simjson.lastFSDDataUpdate;
-        let canUpdate = fsdDataFieldsEmpty;
-        if (!canUpdate && lastUpdate !== undefined) {
-          const elapsed = Math.floor(now / 1000) - lastUpdate;
-          if (elapsed >= fsdDataRefillIntervalSec) canUpdate = true;
-        }
-        if (canUpdate) {
-          simjson.callsign = pilot.callsign ?? "";
-          if (
-            pilot.aircraft_short &&
-            typeof pilot.aircraft_short === "string"
-          ) {
-            simjson.type = pilot.aircraft_short;
-          } else if (
-            pilot.flight_plan?.aircraft_short &&
-            typeof pilot.flight_plan.aircraft_short === "string"
-          ) {
-            simjson.type = pilot.flight_plan.aircraft_short;
-          } else if (
-            pilot.flight_plan?.aircraft &&
-            typeof pilot.flight_plan.aircraft === "string"
-          ) {
-            simjson.type = pilot.flight_plan.aircraft;
-          } else {
-            simjson.type = "";
-          }
-          if (pilot.flight_plan) {
-            const fp = pilot.flight_plan;
-            simjson.dep = typeof fp.departure === "string" ? fp.departure : "";
-            simjson.arr = typeof fp.arrival === "string" ? fp.arrival : "";
-            simjson.deptime = typeof fp.deptime === "string" ? fp.deptime : "";
-            simjson.transponder_asgn =
-              typeof fp.assigned_transponder === "string"
-                ? fp.assigned_transponder
-                : "";
-            const route = typeof fp.route === "string" ? fp.route : "";
-            simjson.depRwy = extractDepartureRunway(route);
-            simjson.depSID = extractDepartureSID(route);
-            simjson.arrRwy = extractArrivalRunway(route);
-            simjson.arrSTAR = extractArrivalSTAR(route);
-          } else {
-            simjson.dep = "";
-            simjson.arr = "";
-            simjson.deptime = "";
-            simjson.transponder_asgn = "";
-            simjson.depRwy = "";
-            simjson.depSID = "";
-            simjson.arrRwy = "";
-            simjson.arrSTAR = "";
-          }
-          simjson.transponder = pilot.transponder ?? "";
-          simjson.lastFSDDataUpdate = Math.floor(now / 1000);
-          matchedPilotCallsigns.add(simjson.callsign);
-          log(`Correlated: ${JSON.stringify(simjson)}`);
-        }
-      } else {
-        let closestDist = 1e9;
-        let closestPilotIdx = -1;
-        let closestAltDiff = 0;
-        let closestHdgDiff = 0;
-
-        for (let i = 0; i < pilots.length; i++) {
-          const pilot = pilots[i]!;
-          if (
-            pilot.latitude === undefined ||
-            pilot.longitude === undefined ||
-            pilot.altitude === undefined ||
-            pilot.heading === undefined
-          )
-            continue;
-          const vlat = pilot.latitude;
-          const vlon = pilot.longitude;
-          const valt = pilot.altitude;
-          const vhdg = typeof pilot.heading === "number" ? pilot.heading : 0;
-          const dist2d = haversine(slat, slon, vlat, vlon);
-          const altDiff = Math.abs(salt - valt);
-          const hdgDiff = Math.abs(
-            ((((shdg - vhdg + 180) % 360) + 360) % 360) - 180,
-          );
-          if (dist2d < closestDist) {
-            closestDist = dist2d;
-            closestPilotIdx = i;
-            closestAltDiff = altDiff;
-            closestHdgDiff = hdgDiff;
-          }
-        }
-
-        let closestCallsign = "";
-        if (closestPilotIdx !== -1) {
-          closestCallsign =
-            pilots[closestPilotIdx]?.callsign ?? "";
-        }
-        log(`Not Correlated: ${JSON.stringify(simjson)}`);
-        log(
-          `  Closest on FSD Data: callsign=${closestCallsign}, dist2d=${closestDist}m, alt_diff=${closestAltDiff}ft, hdg_diff=${closestHdgDiff} deg`,
-        );
-      }
-    }
-  }
-
-  // Remove aircraft whose callsign is no longer in the data
-  const activeCallsigns = new Set<string>();
-  for (const p of pilots) {
-    if (p.callsign) activeCallsigns.add(p.callsign);
-  }
-  for (const [id, entry] of S.simAircraftMap) {
-    if (
-      entry.callsign &&
-      entry.lastFSDDataUpdate !== undefined &&
-      !activeCallsigns.has(entry.callsign)
-    ) {
-      log(`Removing ${id} (${entry.callsign}) - no longer on FSD Data`);
-      S.simAircraftMap.delete(id);
-    }
-  }
+function updateFsdFallbackPositionFields(
+  simjson: SimAircraftEntry,
+  pilot: FSDDataPilot,
+): void {
+  simjson.fsdLatitude = pilot.latitude;
+  simjson.fsdLongitude = pilot.longitude;
+  simjson.fsdAltitude = pilot.altitude;
+  simjson.fsdHeading = typeof pilot.heading === "number" ? pilot.heading : undefined;
+  simjson.fsdGroundspeed = pilot.groundspeed;
 }
+
+function refillFromFsdPilot(
+  simjson: SimAircraftEntry,
+  pilot: FSDDataPilot,
+  nowSec: number,
+  replaceEmptyType = true,
+): void {
+  updateFsdFallbackPositionFields(simjson, pilot);
+
+  if (
+    pilot.aircraft_short &&
+    typeof pilot.aircraft_short === "string" &&
+    (replaceEmptyType || !simjson.type)
+  ) {
+    simjson.type = pilot.aircraft_short;
+  } else if (
+    pilot.flight_plan?.aircraft_short &&
+    typeof pilot.flight_plan.aircraft_short === "string" &&
+    (replaceEmptyType || !simjson.type)
+  ) {
+    simjson.type = pilot.flight_plan.aircraft_short;
+  } else if (
+    pilot.flight_plan?.aircraft &&
+    typeof pilot.flight_plan.aircraft === "string" &&
+    (replaceEmptyType || !simjson.type)
+  ) {
+    simjson.type = pilot.flight_plan.aircraft;
+  }
+
+  if (pilot.flight_plan) {
+    const fp = pilot.flight_plan;
+    simjson.dep = typeof fp.departure === "string" ? fp.departure : "";
+    simjson.arr = typeof fp.arrival === "string" ? fp.arrival : "";
+    simjson.deptime = typeof fp.deptime === "string" ? fp.deptime : "";
+    simjson.transponder_asgn =
+      typeof fp.assigned_transponder === "string" ? fp.assigned_transponder : "";
+    const route = typeof fp.route === "string" ? fp.route : "";
+    simjson.depRwy = extractDepartureRunway(route);
+    simjson.depSID = extractDepartureSID(route);
+    simjson.arrRwy = extractArrivalRunway(route);
+    simjson.arrSTAR = extractArrivalSTAR(route);
+  }
+
+  if (pilot.transponder) simjson.transponder = pilot.transponder;
+  simjson.lastFSDDataUpdate = nowSec;
+}
+
+// FSD data.json is deliberately not used for correlation. Correlation is based on
+// SimConnect + EuroScope proxy positions only; FSD only refills metadata and API
+// fallback coordinates for already-correlated callsigns.
+export function correlateFSDDataToSimConnect(): void {}
 
 // ===== FSD Data Refill =====
 export function refillAircraftFieldsFromFSDData(): void {
   if (!S.fsdData.value.pilots) return;
 
-  const now = Date.now();
+  const nowSec = Math.floor(Date.now() / 1000);
 
   for (const [, simjson] of S.simAircraftMap) {
     if (!simjson.callsign) continue;
@@ -245,43 +107,11 @@ export function refillAircraftFieldsFromFSDData(): void {
         const lastUpdate = simjson.lastFSDDataUpdate;
         let canUpdate = fsdDataFieldsEmpty;
         if (!canUpdate && lastUpdate !== undefined) {
-          const elapsed = Math.floor(now / 1000) - lastUpdate;
+          const elapsed = nowSec - lastUpdate;
           if (elapsed >= fsdDataRefillIntervalSec) canUpdate = true;
         }
-        if (canUpdate) {
-          if (
-            pilot.aircraft_short &&
-            typeof pilot.aircraft_short === "string"
-          ) {
-            simjson.type = pilot.aircraft_short;
-          } else if (
-            pilot.flight_plan?.aircraft_short &&
-            typeof pilot.flight_plan.aircraft_short === "string"
-          ) {
-            simjson.type = pilot.flight_plan.aircraft_short;
-          } else if (
-            pilot.flight_plan?.aircraft &&
-            typeof pilot.flight_plan.aircraft === "string"
-          ) {
-            simjson.type = pilot.flight_plan.aircraft;
-          }
-          if (pilot.flight_plan) {
-            const fp = pilot.flight_plan;
-            simjson.dep = typeof fp.departure === "string" ? fp.departure : "";
-            simjson.arr = typeof fp.arrival === "string" ? fp.arrival : "";
-            simjson.deptime = typeof fp.deptime === "string" ? fp.deptime : "";
-            simjson.transponder_asgn =
-              typeof fp.assigned_transponder === "string"
-                ? fp.assigned_transponder
-                : "";
-            const route = typeof fp.route === "string" ? fp.route : "";
-            simjson.depRwy = extractDepartureRunway(route);
-            simjson.depSID = extractDepartureSID(route);
-            simjson.arrRwy = extractArrivalRunway(route);
-            simjson.arrSTAR = extractArrivalSTAR(route);
-          }
-          simjson.lastFSDDataUpdate = Math.floor(now / 1000);
-        }
+
+        refillFromFsdPilot(simjson, pilot, nowSec, canUpdate);
         break;
       }
     }

@@ -143,6 +143,16 @@ export function printAircraftData(objectId: number, data: RawBuffer): void {
             obj.lastFSDDataUpdate = entry.lastFSDDataUpdate;
           if (entry.last_proxy_refill !== undefined)
             obj.last_proxy_refill = entry.last_proxy_refill;
+          if (entry.proxyCorrelationState !== undefined)
+            obj.proxyCorrelationState = entry.proxyCorrelationState;
+          if (entry.proxyCorrelationCandidate !== undefined)
+            obj.proxyCorrelationCandidate = entry.proxyCorrelationCandidate;
+          if (entry.proxyCorrelationMisses !== undefined)
+            obj.proxyCorrelationMisses = entry.proxyCorrelationMisses;
+          if (entry.proxyCorrelationStreak !== undefined)
+            obj.proxyCorrelationStreak = entry.proxyCorrelationStreak;
+          if (entry.proxyLastCorrelationEpochSec !== undefined)
+            obj.proxyLastCorrelationEpochSec = entry.proxyLastCorrelationEpochSec;
           S.simAircraftMap.delete(id);
           log(
             `Merged proxy ${entry.callsign} (id ${id}) into SimConnect ${objectId}`,
@@ -257,6 +267,8 @@ export function cleanupStaleSimObjects(seenIds: Set<number>): void {
   for (const [id, obj] of S.simAircraftMap) {
     let shouldRemove = false;
 
+    if (id < 0) continue;
+
     if (!seenIds.has(id)) {
       if (obj.last_seen !== undefined) {
         if (nowSec - obj.last_seen > aircraftTtlSeconds) {
@@ -268,8 +280,8 @@ export function cleanupStaleSimObjects(seenIds: Set<number>): void {
     }
 
     if (shouldRemove) {
-      // log(`Removing stale aircraft ${id} (TTL expired)`);
-      // S.simAircraftMap.delete(id);
+      log(`Removing stale aircraft ${id} (TTL expired)`, "debug");
+      S.simAircraftMap.delete(id);
     }
   }
 }
@@ -279,14 +291,14 @@ export function cleanupAircraftByTtl(): void {
   for (const [id, obj] of S.simAircraftMap) {
     let shouldRemove = false;
 
-    if (
-      obj.last_seen !== undefined &&
-      nowSec - obj.last_seen > aircraftTtlSeconds
-    ) {
-      shouldRemove = true;
-    }
-
-    if (
+    if (id >= 0) {
+      if (
+        obj.last_seen !== undefined &&
+        nowSec - obj.last_seen > aircraftTtlSeconds
+      ) {
+        shouldRemove = true;
+      }
+    } else if (
       obj.last_proxy_update !== undefined &&
       nowSec - obj.last_proxy_update > aircraftTtlSeconds
     ) {
@@ -294,11 +306,11 @@ export function cleanupAircraftByTtl(): void {
     }
 
     if (shouldRemove) {
-      // log(
-      //   `Removing stale aircraft ${id} (${obj.callsign || ""}) (TTL expired)`,
-      //   "debug",
-      // );
-      // S.simAircraftMap.delete(id);
+      log(
+        `Removing stale aircraft ${id} (${obj.callsign || ""}) (TTL expired)`,
+        "debug",
+      );
+      S.simAircraftMap.delete(id);
     }
   }
 }
