@@ -22,5 +22,5 @@ export function logPacket(label: string, msg: string): void {
   } catch {
     process.stderr.write(`Failed to write to proxy_packets.log: ${line}`);
   }
-  _packetLogs = [..._packetLogs, entry];
+  _packetLogs = [..._packetLogs, entry].slice(-100);
 }

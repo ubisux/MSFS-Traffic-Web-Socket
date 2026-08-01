@@ -21,5 +21,5 @@ export function log(msg: string, level: LogLevel = "info"): void {
   } catch {
     process.stderr.write(`Failed to write to bridge.log: ${line}`);
   }
-  _logs = [..._logs, entry];
+  _logs = [..._logs, entry].slice(-100);
 }
