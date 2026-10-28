@@ -3,7 +3,12 @@ import * as net from "node:net";
 import { log } from "../../loggers/logger.ts";
 import { logPacket } from "../../loggers/proxy_packet_logger.ts";
 import type { ProxyData, ProxyPilot } from "../../shared/types.ts";
-import { PROXY_HOST, PROXY_PORT, PROXY_PACKET_TIMEOUT_SEC } from "../../shared/types.ts";
+import {
+  PROXY_ACTIVE_TIMEOUT_SEC,
+  PROXY_HOST,
+  PROXY_PACKET_TIMEOUT_SEC,
+  PROXY_PORT,
+} from "../../shared/types.ts";
 import { simAircraftMap } from "../../state/aircraft.ts";
 import {
   euroScopeState,
@@ -55,6 +60,13 @@ export function cleanupStaleProxyPilots(nowSec = Math.floor(Date.now() / 1000)):
           entry.proxyCorrelationState = "stale";
           entry.proxyCorrelationMisses = (entry.proxyCorrelationMisses ?? 0) + 1;
           entry.proxyCorrelationStreak = 0;
+          // A positional binding is only a guess; once its evidence is gone the label
+          // must go with it, otherwise the object keeps a callsign nothing supports.
+          if (entry.proxyCorrelationBasis === "position") {
+            entry.callsign = "";
+            entry.proxyCorrelationCandidate = undefined;
+            entry.proxyCorrelationBasis = undefined;
+          }
           log(
             `Marked aircraft ${id} (${pilot.callsign}) proxy stale - no proxy packet for ${PROXY_PACKET_TIMEOUT_SEC} seconds`,
           );
@@ -106,6 +118,7 @@ function parseAircraftData(data: string): void {
               groundspeed,
               transponder,
               lastPacketReceived: nowSec,
+              fixTimeMs: Date.now(),
             };
             let found = false;
             for (const existing of proxyPilots) {
@@ -344,7 +357,7 @@ export function isProxyActive(): boolean {
   return withPilotsLock(() => {
     if (lastProxyUpdateTime === 0) return false;
     const now = Math.floor(Date.now() / 1000);
-    return now - lastProxyUpdateTime <= 15;
+    return now - lastProxyUpdateTime <= PROXY_ACTIVE_TIMEOUT_SEC;
   });
 }
 

@@ -5,7 +5,6 @@ import {
 } from "../../config.ts";
 import { log } from "../../loggers/logger.ts";
 import type { ProxyPilot, SimAircraftEntry } from "../../shared/types.ts";
-import { haversine } from "../../shared/types.ts";
 import * as S from "../../state.ts";
 import { nextProxyId } from "../../state/proxy.ts";
 import {
@@ -14,9 +13,16 @@ import {
   isProxyActive,
   cleanupStaleProxyPilots,
 } from "./proxy_bridge.ts";
+import { evaluateProxyMatch } from "./proxy_match.ts";
 
 // ===== Proxy Correlation =====
 
+// SimConnect is the position authority and its ATC ID (aircraft callsign) is the
+// identity signal; the positional gate in ./proxy_match.ts is only the fallback.
+/**
+ * Positional bindings stay tentative for this many consecutive ticks. A callsign
+ * identity binding is exact and is promoted immediately.
+ */
 const PROXY_CORRELATION_PROMOTE_STREAK = 2;
 const PROXY_CORRELATION_SWITCH_MISSES = 3;
 
@@ -28,15 +34,6 @@ interface ProxyMatchCandidate {
   altDiff: number;
   score: number;
 }
-
-interface SimSnapshot {
-  lat: number;
-  lon: number;
-  alt: number;
-  gs: number;
-  onGround: number;
-}
-
 export function proxyCorrLoop(): void {
   if (S.shouldExit.value) return;
   cleanupStaleProxyPilots();
@@ -49,53 +46,15 @@ export function proxyCorrLoop(): void {
   );
 }
 
-function getSimSnapshot(entry: SimAircraftEntry): SimSnapshot {
-  return {
-    lat: entry.latitude,
-    lon: entry.longitude,
-    alt: entry.altitude,
-    gs: entry.groundspeed,
-    onGround: entry.on_ground,
-  };
-}
-
-function proxyCorrelationRadius(snapshot: SimSnapshot): number {
-  if (snapshot.onGround === 1 || snapshot.gs < 30) {
-    const minRadiusM = 15.0 * 0.3048;
-    const radius = 2.0 * snapshot.gs;
-    return radius < minRadiusM ? minRadiusM : radius;
-  }
-  return 4.0 * snapshot.gs;
-}
-
-function evaluateProxyMatch(
+function evaluateCandidate(
   pilot: ProxyPilot,
   simId: number,
   entry: SimAircraftEntry,
+  nowMs: number,
 ): ProxyMatchCandidate | undefined {
-  const snapshot = getSimSnapshot(entry);
-  const dist2d = haversine(
-    snapshot.lat,
-    snapshot.lon,
-    pilot.latitude,
-    pilot.longitude,
-  );
-  const altDiff = Math.abs(snapshot.alt - pilot.altitude);
-  const radius = proxyCorrelationRadius(snapshot);
-  const altOk = snapshot.onGround === 1 || snapshot.gs < 30
-    ? altDiff <= 30.0
-    : altDiff <= 100.0;
-
-  if (dist2d >= radius || !altOk) return undefined;
-
-  return {
-    pilot,
-    simId,
-    entry,
-    dist2d,
-    altDiff,
-    score: dist2d + altDiff * 2.0,
-  };
+  const match = evaluateProxyMatch(pilot, entry, nowMs);
+  if (!match) return undefined;
+  return { pilot, simId, entry, ...match };
 }
 
 function markProxyCorrelationMiss(entry: SimAircraftEntry): void {
@@ -132,27 +91,45 @@ function applyProxyPilotToSimAircraft(
   }
 }
 
+/** Applies proxy data while retaining why the binding was accepted. */
 function refreshProxyCorrelation(
   entry: SimAircraftEntry,
   pilot: ProxyPilot,
   nowSec: number,
+  basis: "callsign" | "position" | "proxy-only",
 ): void {
   applyProxyPilotToSimAircraft(entry, pilot, nowSec);
   entry.proxyCorrelationCandidate = pilot.callsign;
+  entry.proxyCorrelationBasis = basis;
   entry.proxyCorrelationMisses = 0;
   entry.proxyCorrelationStreak = (entry.proxyCorrelationStreak ?? 0) + 1;
   entry.proxyLastCorrelationEpochSec = nowSec;
-  entry.proxyCorrelationState = entry.proxyCorrelationStreak >=
-      PROXY_CORRELATION_PROMOTE_STREAK
-    ? "correlated"
-    : "tentative";
+  entry.proxyCorrelationState = basis === "position" &&
+      entry.proxyCorrelationStreak < PROXY_CORRELATION_PROMOTE_STREAK
+    ? "tentative"
+    : "correlated";
 }
 
+/**
+ * Entry bound to a callsign, preferring a real SimConnect object over a stub so a
+ * stub is never mistaken for the aircraft once the object has been identified.
+ */
 function findEntryByCallsign(callsign: string): [number, SimAircraftEntry] | undefined {
+  let stub: [number, SimAircraftEntry] | undefined;
   for (const [id, entry] of S.simAircraftMap) {
-    if (entry.callsign === callsign) return [id, entry];
+    if (entry.callsign !== callsign) continue;
+    if (id >= 0) return [id, entry];
+    stub ??= [id, entry];
   }
-  return undefined;
+  return stub;
+}
+
+/**
+ * The callsign SimConnect itself reports for this object, normalised. Empty for
+ * default (non-multiplayer) AI traffic.
+ */
+function atcIdCallsign(entry: SimAircraftEntry): string {
+  return (entry.atcId ?? "").trim().toUpperCase();
 }
 
 function revalidateExistingProxyCorrelations(
@@ -161,28 +138,46 @@ function revalidateExistingProxyCorrelations(
   assignedCallsigns: Set<string>,
   assignedSimIds: Set<number>,
   nowSec: number,
+  nowMs: number,
 ): void {
-  const pilotsByCallsign = new Map(pilots.map((pilot) => [pilot.callsign, pilot]));
+  const pilotsByCallsign = new Map(
+    pilots.map((pilot) => [pilot.callsign.toUpperCase(), pilot]),
+  );
 
   for (const simId of simIds) {
     if (simId < 0) continue;
 
     const entry = S.simAircraftMap.get(simId);
-    if (!entry?.callsign) continue;
+    if (!entry) continue;
 
-    const pilot = pilotsByCallsign.get(entry.callsign);
+    const atc = atcIdCallsign(entry);
+    // `ATC ID` is authoritative: it is the callsign the aircraft itself is squawking
+    // as, so a positional guess must never be allowed to override it.
+    const identityCallsign = atc || entry.callsign.toUpperCase();
+    if (!identityCallsign) continue;
+
+    const pilot = pilotsByCallsign.get(identityCallsign);
     if (!pilot || pilot.lastPacketReceived === undefined) {
-      markProxyCorrelationMiss(entry);
+      if (entry.callsign) markProxyCorrelationMiss(entry);
       continue;
     }
 
-    const candidate = evaluateProxyMatch(pilot, simId, entry);
+    if (atc) {
+      refreshProxyCorrelation(entry, pilot, nowSec, "callsign");
+      assignedCallsigns.add(pilot.callsign);
+      assignedSimIds.add(simId);
+      continue;
+    }
+
+    if (!entry.callsign) continue;
+
+    const candidate = evaluateCandidate(pilot, simId, entry, nowMs);
     if (!candidate) {
       markProxyCorrelationMiss(entry);
       continue;
     }
 
-    refreshProxyCorrelation(entry, pilot, nowSec);
+    refreshProxyCorrelation(entry, pilot, nowSec, "position");
     assignedCallsigns.add(pilot.callsign);
     assignedSimIds.add(simId);
   }
@@ -203,10 +198,14 @@ function handleExistingCallsignOwner(
   if (!existing || existing[0] === candidate.simId) return true;
 
   const [existingId, existingEntry] = existing;
+  // A stub that already sits on the proxy fix is the better owner than a distant
+  // SimConnect object; drop it and let the positional pass decide.
   if (existingId < 0) {
     S.simAircraftMap.delete(existingId);
     return true;
   }
+  // Never take a callsign away from the object that reports it as its own ATC ID.
+  if (atcIdCallsign(existingEntry)) return false;
 
   const existingSwitchable =
     (existingEntry.proxyCorrelationMisses ?? 0) >= PROXY_CORRELATION_SWITCH_MISSES ||
@@ -216,6 +215,7 @@ function handleExistingCallsignOwner(
   markProxyCorrelationMiss(existingEntry);
   existingEntry.callsign = "";
   existingEntry.proxyCorrelationCandidate = undefined;
+  existingEntry.proxyCorrelationBasis = undefined;
   existingEntry.proxyLastCorrelationEpochSec = nowSec;
   return true;
 }
@@ -226,6 +226,7 @@ function correlateFreshProxyPacketsToNearestSimConnect(
   assignedCallsigns: Set<string>,
   assignedSimIds: Set<number>,
   nowSec: number,
+  nowMs: number,
 ): void {
   const candidates: ProxyMatchCandidate[] = [];
 
@@ -237,9 +238,13 @@ function correlateFreshProxyPacketsToNearestSimConnect(
       if (assignedSimIds.has(simId)) continue;
 
       const entry = S.simAircraftMap.get(simId);
-      if (!entry || simId < 0 || !canAssignEntry(entry, pilot)) continue;
+      if (!entry || simId < 0) continue;
+      if (atcIdCallsign(entry) && atcIdCallsign(entry) !== pilot.callsign) {
+        continue;
+      }
+      if (!canAssignEntry(entry, pilot)) continue;
 
-      const candidate = evaluateProxyMatch(pilot, simId, entry);
+      const candidate = evaluateCandidate(pilot, simId, entry, nowMs);
       if (candidate) candidates.push(candidate);
     }
   }
@@ -258,12 +263,12 @@ function correlateFreshProxyPacketsToNearestSimConnect(
     assignedCallsigns.add(callsign);
     assignedSimIds.add(candidate.simId);
 
-    refreshProxyCorrelation(candidate.entry, candidate.pilot, nowSec);
+    refreshProxyCorrelation(candidate.entry, candidate.pilot, nowSec, "position");
 
     log(
       previousCallsign && previousCallsign !== callsign
-        ? `Proxy re-correlated ${candidate.simId}: ${previousCallsign} -> ${callsign} (dist2d=${candidate.dist2d}m, alt_diff=${candidate.altDiff}ft)`
-        : `Proxy correlated ${callsign} (simobjectid ${candidate.simId}, dist2d=${candidate.dist2d}m, alt_diff=${candidate.altDiff}ft)`,
+        ? `Proxy re-correlated ${candidate.simId}: ${previousCallsign} -> ${callsign} (dist2d=${candidate.dist2d.toFixed(0)}m, alt_diff=${candidate.altDiff.toFixed(0)}ft)`
+        : `Proxy correlated ${callsign} (simobjectid ${candidate.simId}, dist2d=${candidate.dist2d.toFixed(0)}m, alt_diff=${candidate.altDiff.toFixed(0)}ft)`,
       "debug",
     );
   }
@@ -282,7 +287,8 @@ export function correlateProxyToSimConnect(): void {
   if (!proxyData.pilots || proxyData.pilots.length === 0) return;
 
   const simIds = Array.from(S.simAircraftMap.keys());
-  const nowSec = Math.floor(Date.now() / 1000);
+  const nowMs = Date.now();
+  const nowSec = Math.floor(nowMs / 1000);
   const assignedCallsigns = new Set<string>();
   const assignedSimIds = new Set<number>();
 
@@ -292,6 +298,7 @@ export function correlateProxyToSimConnect(): void {
     assignedCallsigns,
     assignedSimIds,
     nowSec,
+    nowMs,
   );
 
   correlateFreshProxyPacketsToNearestSimConnect(
@@ -300,6 +307,7 @@ export function correlateProxyToSimConnect(): void {
     assignedCallsigns,
     assignedSimIds,
     nowSec,
+    nowMs,
   );
 
   // Proxy pilot sync - create entries for unmatched proxy pilots and update proxy-only ones
@@ -308,7 +316,7 @@ export function correlateProxyToSimConnect(): void {
 
     const existing = findEntryByCallsign(pilot.callsign);
     if (existing) {
-      if (existing[0] < 0) refreshProxyCorrelation(existing[1], pilot, nowSec);
+      if (existing[0] < 0) refreshProxyCorrelation(existing[1], pilot, nowSec, "proxy-only");
     } else {
       const id = nextProxyId.value--;
       const entry: SimAircraftEntry = {
@@ -319,7 +327,9 @@ export function correlateProxyToSimConnect(): void {
         altitude: pilot.altitude,
         groundspeed: pilot.groundspeed,
         verticalSpeed: 0,
-        on_ground: 0,
+        // A proxy-only aircraft has no attitude data at all; derive ground state from
+        // the fix instead of asserting airborne, which the frontend renders as truth.
+        on_ground: pilot.altitude < 100 && pilot.groundspeed < 40 ? 1 : 0,
         type: pilot.type ?? "",
         dep: pilot.dep ?? "",
         arr: pilot.arr ?? "",
@@ -337,7 +347,8 @@ export function correlateProxyToSimConnect(): void {
         proxyLongitude: pilot.longitude,
         proxyAltitude: pilot.altitude,
         proxyGroundspeed: pilot.groundspeed,
-        proxyCorrelationState: "tentative",
+        proxyCorrelationState: "correlated",
+        proxyCorrelationBasis: "proxy-only",
         proxyCorrelationCandidate: pilot.callsign,
         proxyCorrelationMisses: 0,
         proxyCorrelationStreak: 1,
@@ -348,14 +359,24 @@ export function correlateProxyToSimConnect(): void {
     }
   }
 
-  // Cleanup stale proxy-only entries
+  // Cleanup: drop a stub once its callsign is gone from the proxy feed, or once a
+  // real SimConnect object carries that callsign - otherwise the same aircraft is
+  // rendered twice, once with authoritative data and once with stale stub data.
   const activeProxyCallsigns = new Set(proxyData.pilots.map((p) => p.callsign));
+  const ownedBySimConnect = new Set<string>();
   for (const [simId, entry] of S.simAircraftMap) {
-    if (simId >= 0) continue;
-    if (entry.callsign && !activeProxyCallsigns.has(entry.callsign)) {
-      log(`Removing stale proxy ${simId} (${entry.callsign})`, "debug");
-      S.simAircraftMap.delete(simId);
+    if (simId < 0) continue;
+    if (entry.callsign) ownedBySimConnect.add(entry.callsign);
+    const atc = atcIdCallsign(entry);
+    if (atc) ownedBySimConnect.add(atc);
+  }
+  for (const [simId, entry] of S.simAircraftMap) {
+    if (simId >= 0 || !entry.callsign) continue;
+    if (activeProxyCallsigns.has(entry.callsign) && !ownedBySimConnect.has(entry.callsign)) {
+      continue;
     }
+    log(`Removing stale proxy ${simId} (${entry.callsign})`, "debug");
+    S.simAircraftMap.delete(simId);
   }
 }
 

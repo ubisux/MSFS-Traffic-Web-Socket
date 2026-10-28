@@ -103,7 +103,7 @@ export function startTui(): ReturnType<typeof createNodeApp<TuiState>> {
                     id: "ac-table",
                     columns: [
                       { key: "callsign", header: "CS", width: 10 },
-                      { key: "correlationStatus", header: "CORR", width: 10 },
+                      { key: "correlationStatus", header: "CORR", width: 5 },
                       { key: "type", header: "TYPE", width: 6 },
                       { key: "dep", header: "DEP", width: 6 },
                       { key: "arr", header: "DEST", width: 6 },

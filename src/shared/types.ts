@@ -59,7 +59,19 @@ export interface PositionHistoryEntry {
   vs: number;
 }
 
+/** One SimConnect position sample, used to project a proxy fix onto "now". */
+export interface SimTrackSample {
+  timestamp: number;
+  lat: number;
+  lon: number;
+  alt: number;
+  gs: number;
+  vs: number;
+  onGround: number;
+}
+
 export type ProxyCorrelationState = "tentative" | "correlated" | "stale";
+export type ProxyCorrelationBasis = "callsign" | "position" | "proxy-only";
 
 export interface SimAircraftEntry {
   simobjectid: number;
@@ -83,7 +95,10 @@ export interface SimAircraftEntry {
   scratchpad: string;
   arrRwy: string;
   arrSTAR: string;
+
   position_history?: PositionHistoryEntry[];
+  simTrack?: SimTrackSample[];
+  atcId?: string;
   last_seen?: number;
   lastFSDDataUpdate?: number;
   fsdCorrelationMisses?: number;
@@ -100,6 +115,8 @@ export interface SimAircraftEntry {
   proxyGroundspeed?: number;
   proxyCorrelationState?: ProxyCorrelationState;
   proxyCorrelationCandidate?: string;
+  /** Why the callsign is bound: SimConnect identity, positional match, or proxy-only. */
+  proxyCorrelationBasis?: ProxyCorrelationBasis;
   proxyCorrelationMisses?: number;
   proxyCorrelationStreak?: number;
   proxyLastCorrelationEpochSec?: number;
@@ -151,6 +168,8 @@ export interface ProxyPilot {
   gate?: string;
   scratchpad?: string;
   lastPacketReceived?: number;
+  /** Millisecond epoch of the position fix, used to project it forward in time. */
+  fixTimeMs?: number;
 }
 
 export interface ProxyData {
@@ -183,8 +202,10 @@ export const DEFINITION_4 = 4;
 
 export const PROXY_HOST = "127.0.0.1";
 export const PROXY_PORT = 6810;
-export const PROXY_ACTIVE_TIMEOUT_SEC = 15;
-export const PROXY_PACKET_TIMEOUT_SEC = 5;
+export const PROXY_ACTIVE_TIMEOUT_SEC = 35;
+// Proxy position packets arrive every ~5 s (p99 7.9 s); a shorter timeout would
+// flap every aircraft out of correlation on ordinary jitter.
+export const PROXY_PACKET_TIMEOUT_SEC = 20;
 
 export const BRIDGE_HTTP_PORT = 8080;
 export const MOVEMENT_HTTP_PORT = 8081;

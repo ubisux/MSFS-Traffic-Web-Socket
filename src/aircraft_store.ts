@@ -5,6 +5,14 @@ import type { SimAircraftEntry } from "./shared/types.ts";
 import { radiansToDegrees } from "./shared/types.ts";
 import * as S from "./state.ts";
 
+const SIM_TRACK_INTERVAL_MS = 200;
+const SIM_TRACK_MAX_SAMPLES = 150;
+
+/** Spawn-time adoption of a proxy stub: radius, and required lead over any rival. */
+const SIM_STUB_MERGE_RADIUS_M = 800;
+const SIM_STUB_MERGE_SEPARATION_M = 250;
+const PROXY_IDENTITY_PROMOTE_STREAK = 2;
+
 // ===== Build Aircraft JSON =====
 export function buildAircraftJson(
   simobjectid: number,
@@ -68,6 +76,7 @@ export function printAircraftData(objectId: number, data: RawBuffer): void {
   let groundVelocity = 0;
   let verticalSpeed = 0;
   let title = "";
+  let atcId = "";
 
   try {
     altitude = data.readFloat64();
@@ -80,6 +89,7 @@ export function printAircraftData(objectId: number, data: RawBuffer): void {
     groundVelocity = data.readInt32();
     verticalSpeed = data.readInt32();
     title = data.readString256();
+    atcId = data.readString256();
   } catch (err) {
     log(
       "Aircraft data read error: " +
@@ -115,54 +125,82 @@ export function printAircraftData(objectId: number, data: RawBuffer): void {
     );
     S.simAircraftMap.set(objectId, obj);
 
+    // Adopt a pre-existing proxy stub only when it is unambiguously nearest and
+    // its callsign agrees with SimConnect's identity when one is available.
+    // Proximity alone must never rename a live aircraft to a nearby stand's pilot.
+    let nearestId: number | undefined;
+    let nearestEntry: SimAircraftEntry | undefined;
+    let nearestDist = Infinity;
+    let secondDist = Infinity;
+    const identityCallsign = atcId.trim().toUpperCase();
     for (const [id, entry] of S.simAircraftMap) {
-      if (id < 0 && entry.callsign) {
-        const dist = haversine(
-          latitude,
-          longitude,
-          entry.latitude,
-          entry.longitude,
-        );
-        if (dist < 500) {
-          obj.callsign = entry.callsign;
-          obj.gate = entry.gate;
-          obj.scratchpad = entry.scratchpad;
-          obj.transponder = entry.transponder;
-          obj.type = entry.type;
-          obj.dep = entry.dep;
-          obj.arr = entry.arr;
-          obj.transponder_asgn = entry.transponder_asgn;
-          obj.deptime = entry.deptime;
-          obj.depRwy = entry.depRwy;
-          obj.depSID = entry.depSID;
-          obj.arrRwy = entry.arrRwy;
-          obj.arrSTAR = entry.arrSTAR;
-          if (entry.last_proxy_update !== undefined)
-            obj.last_proxy_update = entry.last_proxy_update;
-          if (entry.lastFSDDataUpdate !== undefined)
-            obj.lastFSDDataUpdate = entry.lastFSDDataUpdate;
-          if (entry.last_proxy_refill !== undefined)
-            obj.last_proxy_refill = entry.last_proxy_refill;
-          if (entry.proxyCorrelationState !== undefined)
-            obj.proxyCorrelationState = entry.proxyCorrelationState;
-          if (entry.proxyCorrelationCandidate !== undefined)
-            obj.proxyCorrelationCandidate = entry.proxyCorrelationCandidate;
-          if (entry.proxyCorrelationMisses !== undefined)
-            obj.proxyCorrelationMisses = entry.proxyCorrelationMisses;
-          if (entry.proxyCorrelationStreak !== undefined)
-            obj.proxyCorrelationStreak = entry.proxyCorrelationStreak;
-          if (entry.proxyLastCorrelationEpochSec !== undefined)
-            obj.proxyLastCorrelationEpochSec = entry.proxyLastCorrelationEpochSec;
-          S.simAircraftMap.delete(id);
-          log(
-            `Merged proxy ${entry.callsign} (id ${id}) into SimConnect ${objectId}`,
-          );
-          break;
-        }
+      if (id >= 0 || !entry.callsign) continue;
+      if (identityCallsign && entry.callsign.trim().toUpperCase() !== identityCallsign) {
+        continue;
       }
+      const dist = haversine(
+        latitude,
+        longitude,
+        entry.latitude,
+        entry.longitude,
+      );
+      if (dist < nearestDist) {
+        secondDist = nearestDist;
+        nearestDist = dist;
+        nearestId = id;
+        nearestEntry = entry;
+      } else if (dist < secondDist) {
+        secondDist = dist;
+      }
+    }
+
+    if (
+      nearestEntry !== undefined &&
+      nearestId !== undefined &&
+      nearestDist < SIM_STUB_MERGE_RADIUS_M &&
+      secondDist - nearestDist > SIM_STUB_MERGE_SEPARATION_M
+    ) {
+      const entry = nearestEntry;
+      obj.callsign = entry.callsign;
+      obj.gate = entry.gate;
+      obj.scratchpad = entry.scratchpad;
+      obj.transponder = entry.transponder;
+      obj.type = entry.type;
+      obj.dep = entry.dep;
+      obj.arr = entry.arr;
+      obj.transponder_asgn = entry.transponder_asgn;
+      obj.deptime = entry.deptime;
+      obj.depRwy = entry.depRwy;
+      obj.depSID = entry.depSID;
+      obj.arrRwy = entry.arrRwy;
+      obj.arrSTAR = entry.arrSTAR;
+      if (entry.last_proxy_update !== undefined)
+        obj.last_proxy_update = entry.last_proxy_update;
+      if (entry.lastFSDDataUpdate !== undefined)
+        obj.lastFSDDataUpdate = entry.lastFSDDataUpdate;
+      if (entry.last_proxy_refill !== undefined)
+        obj.last_proxy_refill = entry.last_proxy_refill;
+      if (entry.proxyCorrelationState !== undefined)
+        obj.proxyCorrelationState = entry.proxyCorrelationState;
+      if (entry.proxyCorrelationCandidate !== undefined)
+        obj.proxyCorrelationCandidate = entry.proxyCorrelationCandidate;
+      if (entry.proxyCorrelationBasis !== undefined)
+        obj.proxyCorrelationBasis = entry.proxyCorrelationBasis;
+      if (entry.proxyCorrelationMisses !== undefined)
+        obj.proxyCorrelationMisses = entry.proxyCorrelationMisses;
+      if (entry.proxyCorrelationStreak !== undefined)
+        obj.proxyCorrelationStreak = entry.proxyCorrelationStreak;
+      if (entry.proxyLastCorrelationEpochSec !== undefined)
+        obj.proxyLastCorrelationEpochSec = entry.proxyLastCorrelationEpochSec;
+      S.simAircraftMap.delete(nearestId!);
+      log(
+        `Merged proxy ${entry.callsign} (id ${nearestId}) into SimConnect ${objectId} (dist=${nearestDist.toFixed(0)}m)`,
+      );
     }
   }
 
+  const nowMs = Date.now();
+  const nowSec = Math.floor(nowMs / 1000);
   obj.simobjectid = objectId;
   obj.latitude = latitude;
   obj.longitude = longitude;
@@ -170,12 +208,53 @@ export function printAircraftData(objectId: number, data: RawBuffer): void {
   obj.groundspeed = groundVelocity;
   obj.verticalSpeed = verticalSpeed;
   obj.on_ground = onGround;
+  if (atcId) {
+    obj.atcId = atcId;
+    const identityCallsign = atcId.trim().toUpperCase();
+    if (
+      obj.proxyCorrelationBasis === "proxy-only" &&
+      obj.callsign.trim().toUpperCase() !== identityCallsign
+    ) {
+      log(
+        `Discarding proxy-only callsign ${obj.callsign} from SimConnect ${objectId}; ATC ID is ${identityCallsign}`,
+        "debug",
+      );
+      obj.callsign = identityCallsign;
+      obj.proxyCorrelationBasis = "callsign";
+      obj.proxyCorrelationState = "correlated";
+      obj.proxyCorrelationCandidate = identityCallsign;
+      obj.proxyCorrelationMisses = 0;
+      obj.proxyCorrelationStreak = PROXY_IDENTITY_PROMOTE_STREAK;
+      obj.proxyLastCorrelationEpochSec = nowSec;
+    }
+  }
   obj.heading = radiansToDegrees(heading);
-
-  const nowSec = Math.floor(Date.now() / 1000);
   obj.last_seen = nowSec;
 
-  if (!obj.callsign) obj.callsign = "";
+  // Time-stamped track: lets the correlation gate compare a proxy fix against the
+  // SimConnect position at the fix's own timestamp instead of at "now".
+  if (!obj.simTrack) obj.simTrack = [];
+  const track = obj.simTrack;
+  const lastSample = track.length > 0 ? track[track.length - 1]! : null;
+  if (!lastSample || nowMs - lastSample.timestamp >= SIM_TRACK_INTERVAL_MS) {
+    track.push({
+      timestamp: nowMs,
+      lat: latitude,
+      lon: longitude,
+      alt: altitude,
+      gs: groundVelocity,
+      vs: verticalSpeed,
+      onGround,
+    });
+    if (track.length > SIM_TRACK_MAX_SAMPLES) track.shift();
+  } else {
+    lastSample.lat = latitude;
+    lastSample.lon = longitude;
+    lastSample.alt = altitude;
+    lastSample.gs = groundVelocity;
+    lastSample.vs = verticalSpeed;
+    lastSample.onGround = onGround;
+  }
 
   if (!obj.position_history) obj.position_history = [];
   const history = obj.position_history;

@@ -36,10 +36,12 @@ export function updateTuiState(): void {
 }
 
 // ===== Correlated aircraft data =====
+export type CorrelationStatus = "Y" | "P" | "N";
+
 export interface CorrelatedAircraftInfo {
   id: number;
   callsign: string;
-  correlationStatus: string;
+  correlationStatus: CorrelationStatus;
   type: string;
   dep: string;
   arr: string;
@@ -51,9 +53,19 @@ export interface CorrelatedAircraftInfo {
   scratchpad: string;
 }
 
-function formatCorrelationStatus(entry: { callsign: string; proxyCorrelationState?: string }): string {
-  if (!entry.callsign) return "uncorr";
-  return entry.proxyCorrelationState ?? "called";
+function formatCorrelationStatus(entry: {
+  callsign: string;
+  proxyCorrelationBasis?: string;
+  proxyCorrelationState?: string;
+}): CorrelationStatus {
+  if (
+    !entry.callsign ||
+    entry.proxyCorrelationBasis === "proxy-only" ||
+    entry.proxyCorrelationState === "stale"
+  ) return "N";
+  if (entry.proxyCorrelationBasis === "position") return "P";
+  if (entry.proxyCorrelationBasis === "callsign") return "Y";
+  return "N";
 }
 
 export function getCorrelatedAircraftData(): CorrelatedAircraftInfo[] {

@@ -1,254 +1,91 @@
 # SimConnect + VATSIM Bridge
 
-This project is a TypeScript bridge that connects Microsoft Flight Simulator (MSFS) via SimConnect to live VATSIM data, correlates aircraft, and exposes the merged data to a browser frontend via a WebSocket server.
+This project is a TypeScript bridge for Microsoft Flight Simulator (MSFS). It reads aircraft from SimConnect, correlates them with EuroScope/FSD and VATSIM data, and exposes the result to the TowerView frontend.
 
 ## Features
 
-- Polls live aircraft data from MSFS using SimConnect.
-- Fetches and parses ES Proxy data and VATSIM JSON data at a configurable interval.
-- Correlates SimConnect and ES+VATSIM aircraft using proximity logic.
-- Maintains a live, thread-safe JSON map of all aircraft with both SimConnect and VATSIM fields.
-- Exposes the full correlated aircraft JSON map via a WebSocket server on localhost.
-- Exposes current user aircraft and camera via a WebSocket server on localhost.
-- Teleports user aircraft and reset camera location using SimConnect via a WebSocket server on localhost.
+- Reads live aircraft and camera data from MSFS through `node-simconnect`.
+- Uses SimConnect `ATC ID` as the authoritative callsign when available; positional correlation is a guarded fallback, and unmatched EuroScope pilots remain proxy-only entries. The TUI `CORR` column shows `Y` for callsign identity, `P` for position fallback, and `N` for proxy-only, stale, or uncorrelated entries.
+- Fetches VATSIM/FSD data to refill metadata and exposes aircraft and camera data at `http://localhost:8080/aircraft`.
+- Provides aircraft movement and camera reset endpoints on port 8081; see [AIRCRAFT_MOVEMENT_API.md](AIRCRAFT_MOVEMENT_API.md).
+- Displays bridge, proxy, FSD, and SimConnect status in a terminal UI.
 
-## Setup
+## TrackAudio station receive API
 
-Install [bun](https://bun.com)
+With TrackAudio running on its SDK websocket (default `ws://127.0.0.1:49080/ws`), select the stations to receive:
 
-```bash
-bun i
-bun .
+```text
+GET http://localhost:8080/stations?stations=KSEA_TWR,SEA_E_GND
 ```
 
-## Version History
+The bridge connects for the request, disables RX on all existing TrackAudio stations, enables RX on the requested callsigns, and closes the websocket. Configure `TRACKAUDIO_WS_URL`, `TRACKAUDIO_CONNECT_TIMEOUT_MS`, and `TRACKAUDIO_MESSAGE_TIMEOUT_MS` through the environment when needed.
 
-1.0.0-beta.1
+## Requirements
 
-- Rewrite in TypeScript, add TUI.
+- Windows x64.
+- [Bun](https://bun.sh/) for development and packaging.
+- Microsoft Flight Simulator with SimConnect available.
+- EuroScope and the appropriate profile when using `launch.bat`.
 
-0.7.2
+`node-simconnect` uses Node-compatible networking APIs and connects to the SimConnect service; keep the dependency files installed beside the source during development. The lexe package is an LLRT-based Node runtime and does not provide Bun APIs, so the packaged bridge is produced from a Node-compatible bundle rather than directly from TypeScript.
 
-- Fixed esproxy port permission issues by using dynamic port allocation.
+## Install and run from source
 
-0.7.1
+Install dependencies with Bun:
 
-- Fixed Camera Reset button using "CAMERA REQUEST ACTION" simvar.
-
-0.7
-
-- Added added aircraft object TTL to avoid JSON object being deleted when MSFS redraws simobjects.
-- Now using cockpit camera. Use with blank aircraft mod with no cockpit if required.
-- Added injection of camera position from endpoint <http://localhost:8081/move> through teleporting the aircraft, triggered through button, with 3DOF position, heading, pitch, cockpit cam zoom factor.
-- Added camera reset through endpoint <http://localhost:8081/reset>
-
-0.6
-
-- Added camera position detection, served as "camera" object in websocket.
-- Added arrival (Star and Gates) detection.
-
-0.5
-
-- Added ES Proxy as main callsign correlation source, falling back to VATSIM data if no ES Proxy connection.
-- Added detection of depRwy and depSID.
-- Fixed tags with Towerview frontend.
-
-0.4.1
-
-- Adjusted correlation logic due to on_ground status from Simconnect being inaccurate.
-- Updated Towerview (Typescript) code.
-
-0.4
-
-- Added logging of position history for the past 60s to correlate with Vatsim due to vatsim update frequency, using lateral and vertical distance factors, giving better accuracy.
-- Removed recorrelation logic.
-
-0.3
-
-- Added Typesrcript (Node.js) frontend
-
-0.2.1
-
-- Added 'heading', 'transponder', 'transponder_asgn', and 'deptime' fields for aircraft JSON object.
-- Removed 'registration' from the JSON output.
-- VATSIM callsign-based refilling now updates all VATSIM fields every 60s for all aircraft with callsigns, not just those with empty fields.
-
-0.2
-
-- Added websocket at <http://localhost:8080/aircraft>
-- fixed build.bat and CMakeLists.txt
-
-0.1.1
-
-- No longer showing each line of calculation of distance for every VATSIM pilot.
-- Moved the build folder out by one level (now at project root).
-
-0.1
-
-- Initial commit.
-- Correlation between SimConnect aircraft and VATSIM data.
-- Full verbose debug output for calculating each VATSIM pilot's distance from each uncorrelated aircraft.
-
-## Building
-
-1. **Requirements:**
-   - CMake 3.10+
-   - MSVC or compatible C++17 compiler
-   - SimConnect SDK (headers and libraries are included)
-   - [nlohmann/json](https://github.com/nlohmann/json) (header included)
-   - [cpp-httplib](https://github.com/yhirose/cpp-httplib) (header-only, add `httplib.h` to `src/`)
-
-2. **Build Steps:**
-   - Open a terminal in `Towerview/src`.
-   - Run:
-
-     ```
-     mkdir build
-     cd build
-     cmake ..
-     cmake --build .
-     ```
-
-   - The executable `simconnect_bridge` will be created in the build output directory.
-
-3. **DLLs:**
-   - Ensure `SimConnect.dll` is present in the same directory as the executable (the build script copies it automatically).
-
-## Running
-
-- Run the bridge executable:
-
-  ```
-  ./simconnect_bridge
-  ```
-
-- The app will start polling MSFS and VATSIM, correlating aircraft, and serving data.
-
-## Accessing Aircraft Data
-
-- The WebSocket server runs on `ws://localhost:8080` (or the port you configure).
-- To get the full aircraft JSON dump, connect to the WebSocket and send a request (see code for endpoint details).
-- You can also extend the server to support HTTP GET requests for `/aircraft` if needed.
-
-## Example JSON Output
-
-```json
-[
-  {
-    "altitude": 206,
-    "arr": "LEPA",
-    "callsign": "EXS53MP",
-    "dep": "EGKK",
-    "deptime": "1940",
-    "groundspeed": 0,
-    "heading": 1.34990309179687,
-    "last_vatsim_update": 51527,
-    "latitude": 51.1540300045559,
-    "longitude": -0.164100018851852,
-    "on_ground": 1,
-    "simobjectid": 2599,
-    "transponder": "1234",
-    "transponder_asgn": "7270",
-    "type": "B738",
-    "verticalSpeed": 0
-  },
-  ...
-]
+```sh
+bun install
+bun run typecheck
+bun run lint
+bun run start
 ```
 
-## Customization
+The source application still uses Bun during development because its HTTP servers and TUI currently depend on Bun APIs. Lexe packaging is intended for the release artifact and requires the bundle step described below.
 
-- Edit the correlation logic in `simconnect_bridge.cpp` to adjust matching rules.
-- Extend the WebSocket server to support more endpoints or push updates.
+## Build a Windows release
+
+Install the pinned lexe CLI from the project dependencies, then build:
+
+```sh
+bun install
+bun run build
+```
+
+The default build uses Bun's Windows executable compiler and writes `out/fsd-bridge.exe`. The optional `bun run build:lexe` command creates an experimental LLRT executable, but it is not suitable for the complete bridge because the application depends on Bun APIs, Rezi native modules, and Node APIs that LLRT does not implement. Lexe does not support Bun's `--compile`, `--bytecode`, or `--windows-icon` flags; `app.ico` is used by the Bun build.
+
+Lexe is based on LLRT and supports a smaller Node API surface than Node.js. In particular, its upstream documentation does not recommend it for HTTP services and it does not support Bun-specific APIs. Before distributing the executable, verify the generated artifact against the complete bridge runtime. If lexe cannot run the full bridge because of `Bun.serve`, the Rezi TUI, or native/runtime loading, retain the source Bun workflow and treat the lexe output as experimental rather than a drop-in replacement.
+
+## Runtime files and launchers
+
+Run the packaged bridge directly with:
+
+```bat
+run.bat
+```
+
+`run.bat` expects `out\\fsd-bridge.exe` and runs it with the output directory as the working directory. `launch.bat` starts the bridge, launches EuroScope with its profile, and terminates only the bridge executable when EuroScope exits. Set `BRIDGE_PATH`, `EUROSCOPE_PATH`, and `PROFILE_PATH` to override the defaults.
+
+Keep any SimConnect runtime DLLs required by the installed MSFS/SimConnect setup in the location expected by the native dependency and Windows loader. A lexe executable is not assumed to embed arbitrary native DLLs or native Node addons; if the packaged runtime requires external files, distribute those files beside `out\\fsd-bridge.exe` and document their exact layout.
+
+The following environment variables may be used to tune polling:
+
+- `SIMCONNECT_FETCH_INTERVAL` (default `0.01` seconds)
+- `FSD_DATA_FETCH_INTERVAL` (default `15` seconds)
+- `FSD_DATA_REFILL_INTERVAL` (default `15` seconds)
+- `PROXY_CORRELATION_INTERVAL` (default `1` second)
+- `AIRCRAFT_TTL_SECONDS` (default `30` seconds)
+- `SIMCONNECT_RECONNECT_DELAY` (default `5` seconds)
+
+## APIs
+
+- `GET http://localhost:8080/aircraft` returns `{ aircraft, camera }`.
+- Movement and reset APIs are documented in [AIRCRAFT_MOVEMENT_API.md](AIRCRAFT_MOVEMENT_API.md).
+- The TowerView frontend consumes the aircraft endpoint and can be run separately from the bridge.
+
+## Development notes
+
+The TypeScript implementation lives under [src/](src/) and the executable entrypoint is [index.ts](index.ts). Correlation logic is split between the FSD, proxy, and state modules. The old C++/CMake build is no longer the release path for the TypeScript branch.
 
 ## License
 
-- See main project license. SimConnect SDK is subject to Microsoft EULA.
-
-## Running the TypeScript/React Frontend Locally
-
-To run and test the web frontend (TypeScript/React) locally:
-
-1. **Install Dependencies**
-
-   Open a terminal in the project root (where your `package.json` is) and run:
-
-   ```sh
-   npm install
-   ```
-
-   This will install all dependencies listed in `package.json`.
-
-   If you do not have a `package.json`, you can create one and install the necessary packages for a React + TypeScript project:
-
-   ```sh
-   npm init -y
-   npm install react react-dom
-   npm install --save-dev typescript @types/react @types/react-dom
-   ```
-
-   If you are using Next.js (recommended for this project):
-
-   ```sh
-   npm install next
-   npm install --save-dev typescript @types/react @types/node
-   ```
-
-2. **Check/Initialize TypeScript**
-
-   If you don't have a `tsconfig.json`, create one:
-
-   ```sh
-   npx tsc --init
-   ```
-
-   Or, if using Next.js, just run `npm run dev` once and it will create a default `tsconfig.json` for you.
-
-3. **Start the Development Server**
-   - For Next.js:
-
-     ```sh
-     npm run dev
-     ```
-
-     (If you don't have a `package.json` with scripts, add this to your `package.json` under "scripts":)
-
-     ```json
-     "scripts": {
-       "dev": "next dev"
-     }
-     ```
-
-   - For Create React App:
-
-     ```sh
-     npm start
-     ```
-
-     (If you don't have a `package.json` with scripts, add this:)
-
-     ```json
-     "scripts": {
-       "start": "react-scripts start"
-     }
-     ```
-
-4. **Open in Browser**
-
-   Once the server is running, open your browser and go to:
-
-   ```
-   http://localhost:3000
-   ```
-
-   (or whatever port your dev server reports).
-
-5. **Troubleshooting**
-   - If you see errors about missing modules, install them with `npm install <module-name>`.
-   - If you see TypeScript errors about missing types, install them with `npm install --save-dev @types/<module-name>`.
-
-**Summary:**
-
-- Run `npm install`
-- Run `npm run dev` (for Next.js) or `npm start` (for Create React App)
-- Open your browser to `http://localhost:3000`
+See the project license. SimConnect SDK components are subject to Microsoft's license terms.
