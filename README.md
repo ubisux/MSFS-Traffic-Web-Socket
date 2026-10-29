@@ -5,7 +5,7 @@ This project is a TypeScript bridge for Microsoft Flight Simulator (MSFS). It re
 ## Features
 
 - Reads live aircraft and camera data from MSFS through `node-simconnect`.
-- Uses SimConnect `ATC ID` as the authoritative callsign when available; positional correlation is a guarded fallback, and unmatched EuroScope pilots remain proxy-only entries. The TUI `CORR` column shows `Y` for callsign identity, `P` for position fallback, and `N` for proxy-only, stale, or uncorrelated entries.
+- Uses SimConnect `ATC ID` as the authoritative callsign when available; positional correlation is a guarded fallback, and unmatched EuroScope pilots remain proxy-only entries. The TUI `CORR` column shows `Y` for a SimConnect aircraft matched by callsign or proxy position, `P` for a proxy-only entry, and `N` for stale or uncorrelated entries.
 - Fetches VATSIM/FSD data to refill metadata and exposes aircraft and camera data at `http://localhost:8080/aircraft`.
 - Provides aircraft movement and camera reset endpoints on port 8081; see [AIRCRAFT_MOVEMENT_API.md](AIRCRAFT_MOVEMENT_API.md).
 - Displays bridge, proxy, FSD, and SimConnect status in a terminal UI.

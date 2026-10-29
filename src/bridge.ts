@@ -58,13 +58,12 @@ function formatCorrelationStatus(entry: {
   proxyCorrelationBasis?: string;
   proxyCorrelationState?: string;
 }): CorrelationStatus {
+  if (!entry.callsign || entry.proxyCorrelationState === "stale") return "N";
+  if (entry.proxyCorrelationBasis === "proxy-only") return "P";
   if (
-    !entry.callsign ||
-    entry.proxyCorrelationBasis === "proxy-only" ||
-    entry.proxyCorrelationState === "stale"
-  ) return "N";
-  if (entry.proxyCorrelationBasis === "position") return "P";
-  if (entry.proxyCorrelationBasis === "callsign") return "Y";
+    entry.proxyCorrelationBasis === "position" ||
+    entry.proxyCorrelationBasis === "callsign"
+  ) return "Y";
   return "N";
 }
 
