@@ -66,27 +66,23 @@ if not defined PROFILE_PATH (
     )
 )
 
-REM Find simconnect_bridge only if not already set
+REM Find fsd-bridge only if not already set
 if not defined BRIDGE_PATH (
-    if exist ".\build\Release\simconnect_bridge.exe" (
-        set "BRIDGE_PATH=.\build\Release\simconnect_bridge.exe"
-    ) else if exist ".\build\x64\Release\simconnect_bridge.exe" (
-        set "BRIDGE_PATH=.\build\x64\Release\simconnect_bridge.exe"
-    ) else if exist ".\simconnect_bridge.exe" (
-        set "BRIDGE_PATH=.\simconnect_bridge.exe"
+    if exist "%~dp0out\fsd-bridge.exe" (
+        set "BRIDGE_PATH=%~dp0out\fsd-bridge.exe"
     ) else (
-        msg * "ERROR: simconnect_bridge.exe not found! Please place simconnect_bridge.exe in this directory or set BRIDGE_PATH environment variable."
+        msg * "ERROR: fsd-bridge.exe not found! Run bun run build first or set BRIDGE_PATH environment variable."
         exit /b 1
     )
 )
 
-REM Start simconnect_bridge in the background (hidden window)
+REM Start fsd-bridge in the background (hidden window)
 if not defined SIMCONNECT_FETCH_INTERVAL set SIMCONNECT_FETCH_INTERVAL=0.01
 if not defined FSD_DATA_FETCH_INTERVAL set FSD_DATA_FETCH_INTERVAL=15
 if not defined FSD_DATA_REFILL_INTERVAL set FSD_DATA_REFILL_INTERVAL=15
 if not defined PROXY_CORRELATION_INTERVAL set PROXY_CORRELATION_INTERVAL=1.0
 if not defined AIRCRAFT_TTL_SECONDS set AIRCRAFT_TTL_SECONDS=30
-start /min "" "!BRIDGE_PATH!"
+start /min "" /D "%~dp0out" "!BRIDGE_PATH!"
 
 REM Extract EuroScope directory
 for %%I in ("!EUROSCOPE_PATH!") do set "EUROSCOPE_DIR=%%~dpI"
@@ -97,6 +93,7 @@ start /wait "" "!EUROSCOPE_PATH!" "!PROFILE_PATH!"
 popd
 
 REM When EuroScope exits, kill the bridge process
-taskkill /IM simconnect_bridge.exe /F >nul 2>&1
+for %%I in ("!BRIDGE_PATH!") do set "BRIDGE_NAME=%%~nxI"
+taskkill /IM "!BRIDGE_NAME!" /F >nul 2>&1
 
 exit /b 0

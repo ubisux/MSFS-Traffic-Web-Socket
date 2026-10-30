@@ -1,4 +1,7 @@
 @echo off
+setlocal
+pushd "%~dp0"
+
 REM Set default refresh intervals (can be overridden by user)
 IF NOT DEFINED SIMCONNECT_FETCH_INTERVAL SET SIMCONNECT_FETCH_INTERVAL=0.01
 IF NOT DEFINED FSD_DATA_FETCH_INTERVAL SET FSD_DATA_FETCH_INTERVAL=15
@@ -6,4 +9,13 @@ IF NOT DEFINED FSD_DATA_REFILL_INTERVAL SET FSD_DATA_REFILL_INTERVAL=15
 IF NOT DEFINED PROXY_CORRELATION_INTERVAL SET PROXY_CORRELATION_INTERVAL=1.0
 IF NOT DEFINED AIRCRAFT_TTL_SECONDS SET AIRCRAFT_TTL_SECONDS=30
 
-build\Release\simconnect_bridge.exe
+IF NOT EXIST "out\fsd-bridge.exe" (
+    echo ERROR: out\fsd-bridge.exe not found. Run "bun run build" first.
+    popd
+    exit /b 1
+)
+
+out\fsd-bridge.exe
+set EXIT_CODE=%ERRORLEVEL%
+popd
+exit /b %EXIT_CODE%

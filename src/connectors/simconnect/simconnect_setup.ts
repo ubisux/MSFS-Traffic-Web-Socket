@@ -84,6 +84,15 @@ function setupDataDefinitions(): void {
     sc.INT32,
   );
   S.handle.value.addToDataDefinition(DEFINITION_1, "TITLE", "", sc.STRING256);
+  // ATC ID carries the VATSIM callsign for model-matched multiplayer traffic, so it
+  // is an exact identity signal rather than a proximity guess. Objects without it
+  // (default AI traffic) simply return an empty string.
+  S.handle.value.addToDataDefinition(
+    DEFINITION_1,
+    "ATC ID",
+    "",
+    sc.STRING256,
+  );
 
   S.handle.value.addToDataDefinition(
     DEFINITION_2,
