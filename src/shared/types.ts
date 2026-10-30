@@ -117,6 +117,7 @@ export interface SimAircraftEntry {
   proxyCorrelationCandidate?: string;
   /** Why the callsign is bound: SimConnect identity, positional match, or proxy-only. */
   proxyCorrelationBasis?: ProxyCorrelationBasis;
+  transceivers?: VatsimTransceiver[];
   proxyCorrelationMisses?: number;
   proxyCorrelationStreak?: number;
   proxyLastCorrelationEpochSec?: number;
@@ -152,6 +153,21 @@ export interface FSDDataResponse {
   };
   pilots?: FSDDataPilot[];
   [key: string]: unknown;
+}
+
+export interface VatsimTransceiver {
+  id: number;
+  frequency: number;
+  latDeg: number;
+  lonDeg: number;
+  heightMslM: number;
+  heightAglM: number;
+}
+
+export interface VatsimAudioClient {
+  callsign: string;
+  transceivers: VatsimTransceiver[];
+  shoutLineIds?: number[];
 }
 
 export interface ProxyPilot {

@@ -7,6 +7,10 @@ export let fsdDataRefillIntervalSec = 15.0;
 export let proxyCorrelationIntervalSec = 1.0;
 export let aircraftTtlSeconds = 30.0;
 export let reconnectDelaySec = 5.0;
+export let trackAudioWsUrl = "ws://127.0.0.1:49080/ws";
+export let trackAudioConnectTimeoutMs = 3000;
+export let trackAudioMessageTimeoutMs = 3000;
+export let transceiversDataUrl = "https://data.vatsim.net/v3/transceivers-data.json";
 
 export function readEnvConfig(): void {
   const simEnv = Bun.env["SIMCONNECT_FETCH_INTERVAL"];
@@ -50,6 +54,23 @@ export function readEnvConfig(): void {
     if (val >= 1.0) reconnectDelaySec = val;
   }
 
+  const trackAudioUrlEnv = Bun.env["TRACKAUDIO_WS_URL"];
+  if (trackAudioUrlEnv) trackAudioWsUrl = trackAudioUrlEnv;
+
+  const trackAudioConnectTimeoutEnv = Bun.env["TRACKAUDIO_CONNECT_TIMEOUT_MS"];
+  if (trackAudioConnectTimeoutEnv) {
+    const val = Number(trackAudioConnectTimeoutEnv);
+    if (Number.isFinite(val) && val >= 100) trackAudioConnectTimeoutMs = val;
+  }
+
+  const trackAudioMessageTimeoutEnv = Bun.env["TRACKAUDIO_MESSAGE_TIMEOUT_MS"];
+  if (trackAudioMessageTimeoutEnv) {
+    const val = Number(trackAudioMessageTimeoutEnv);
+    if (Number.isFinite(val) && val >= 100) trackAudioMessageTimeoutMs = val;
+  }
+  const transceiversDataUrlEnv = Bun.env["TRANSCEIVERS_DATA_URL"];
+  if (transceiversDataUrlEnv) transceiversDataUrl = transceiversDataUrlEnv;
+
   log("Configuration:");
   log(`  SimConnect fetch interval: ${simconnectFetchIntervalSec} seconds`);
   log(
@@ -59,4 +80,7 @@ export function readEnvConfig(): void {
   log(`  Proxy correlation interval: ${proxyCorrelationIntervalSec} seconds`);
   log(`  Aircraft TTL: ${aircraftTtlSeconds} seconds`);
   log(`  Reconnect delay: ${reconnectDelaySec} seconds`);
+  log(`  TrackAudio websocket: ${trackAudioWsUrl}`);
+  log(`  TrackAudio timeouts: ${trackAudioConnectTimeoutMs}/${trackAudioMessageTimeoutMs} ms`);
+  log(`  Transceivers data URL: ${transceiversDataUrl}`);
 }

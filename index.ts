@@ -9,6 +9,7 @@ import {
   stopPollLoop,
 } from "./src/connectors/simconnect/simconnect_setup.ts";
 import { httpServerThread } from "./src/http_server.ts";
+import { transceiversDataLoop } from "./src/connectors/fsd-data/transceivers_data.ts";
 import { log } from "./src/loggers/logger.ts";
 import * as S from "./src/state.ts";
 import { startTui } from "./src/tui.ts";
@@ -33,6 +34,7 @@ try {
   startProxyThreads(S.quit);
   startAircraftMovementControl(S.quit);
   S.fsdDataTimer.value = setTimeout(fsdDataLoop, 0);
+  S.transceiversDataTimer.value = setTimeout(transceiversDataLoop, 0);
   S.proxyCorrTimer.value = setTimeout(proxyCorrLoop, 0);
 
   // Handle graceful shutdown
@@ -40,9 +42,10 @@ try {
     log("Shutting down...");
     S.shouldExit.value = true;
     stopPollLoop();
-    if (S.fsdDataTimer.value) clearTimeout(S.fsdDataTimer.value);
-    if (S.proxyCorrTimer.value) clearTimeout(S.proxyCorrTimer.value);
-    if (S.tuiTimer.value) clearTimeout(S.tuiTimer.value);
+    clearTimeout(S.fsdDataTimer.value);
+    clearTimeout(S.transceiversDataTimer.value);
+    clearTimeout(S.proxyCorrTimer.value);
+    clearInterval(S.tuiTimer.value);
     S.handle.value?.close();
     process.exit(0);
   });
@@ -50,7 +53,8 @@ try {
   process.on("SIGTERM", () => {
     S.shouldExit.value = true;
     stopPollLoop();
-    if (S.tuiTimer.value) clearTimeout(S.tuiTimer.value);
+    clearInterval(S.tuiTimer.value);
+    clearTimeout(S.transceiversDataTimer.value);
     S.handle.value?.close();
     process.exit(0);
   });

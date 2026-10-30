@@ -78,7 +78,7 @@ The following environment variables may be used to tune polling:
 
 ## APIs
 
-- `GET http://localhost:8080/aircraft` returns `{ aircraft, camera }`.
+- `GET http://localhost:8080/aircraft` returns `{ aircraft, camera }`; each aircraft includes a `transceivers` array matched by callsign from VATSIM's `/v3/transceivers-data.json` feed. Each transceiver has `id`, `frequency` (Hz), `latDeg`, `lonDeg`, `heightMslM`, and `heightAglM`; unmatched aircraft receive `[]`. Feed refreshes every 15 seconds. Override the URL with `TRANSCEIVERS_DATA_URL`.
 - Movement and reset APIs are documented in [AIRCRAFT_MOVEMENT_API.md](AIRCRAFT_MOVEMENT_API.md).
 - The TowerView frontend consumes the aircraft endpoint and can be run separately from the bridge.
 
