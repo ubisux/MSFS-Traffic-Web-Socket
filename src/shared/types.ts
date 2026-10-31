@@ -169,6 +169,54 @@ export interface VatsimAudioClient {
   transceivers: VatsimTransceiver[];
   shoutLineIds?: number[];
 }
+/** One row from `GET https://api.viffsys.com/ifps/depAirport?airport=…`. */
+export interface IfpsDepAirportFlight {
+  callsign: string;
+  cid: string;
+  departure: string;
+  arrival: string;
+  eobt: string;
+  tobt: string;
+  obt: string;
+  reqTobt: string;
+  taxi: number;
+  ctot: string;
+  aobt: string;
+  atot: string;
+  eta: string;
+  mostPenalizingAirspace: string;
+  cdmSts: string;
+  informed: boolean;
+  latestRevisedCtot: string;
+  atfcmStatus: string;
+  atfcmData: {
+    mostPenalisingRegulation: string;
+    mostPenalisingRegulationType: string;
+    regulations: string;
+    tto: string;
+    excluded: boolean;
+    isRea: boolean;
+    informed: boolean;
+    SIR: boolean;
+    SWM: boolean;
+    extended: boolean;
+    event: boolean;
+  };
+  cdmData: {
+    tobt: string;
+    tsat: string;
+    ttot: string;
+    ctot: string;
+    reason: string;
+    asrt: string;
+    depInfo: string;
+    reqAsrt: string;
+    reqTobt: string;
+    reqTobtType: string;
+    confirmed: boolean;
+    _id: string;
+  };
+}
 
 export interface ProxyPilot {
   callsign: string;
@@ -188,6 +236,9 @@ export interface ProxyPilot {
   fixTimeMs?: number;
 }
 
+/** Partial aircraft configuration from `$CQ<callsign>:@<id>:ACC:{"config":…}`. */
+export type AircraftConfig = Record<string, unknown>;
+
 export interface ProxyData {
   pilots: ProxyPilot[];
 }
@@ -204,6 +255,7 @@ export interface CameraJson {
   aircraft_altitude?: number;
   aircraft_heading?: number;
   aircraft_pitch?: number;
+  aircraft_bank?: number;
 }
 
 // Data definition IDs

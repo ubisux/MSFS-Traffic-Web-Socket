@@ -15,7 +15,7 @@ import {
   printAircraftData,
   printCameraData,
 } from "../../aircraft_store.ts";
-import { reconnectDelaySec } from "../../config.ts";
+import { reconnectDelaySec, simconnectFetchIntervalSec } from "../../config.ts";
 import { log } from "../../loggers/logger.ts";
 import {
   DEFINITION_1,
@@ -160,6 +160,12 @@ function setupDataDefinitions(): void {
     "radian",
     sc.FLOAT64,
   );
+  S.handle.value.addToDataDefinition(
+    DEFINITION_2,
+    "PLANE BANK DEGREES",
+    "radian",
+    sc.FLOAT64,
+  );
 
   setupAircraftMovementDefinition();
 }
@@ -186,7 +192,7 @@ function startPollLoop(): void {
     if (!S.quit.value) {
       startPollLoop();
     }
-  }, 10);
+  }, simconnectFetchIntervalSec * 1000);
 }
 
 export function stopPollLoop(): void {

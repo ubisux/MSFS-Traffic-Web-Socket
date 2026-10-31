@@ -304,6 +304,7 @@ export function printCameraData(data: RawBuffer): void {
   let altitude = 0;
   let heading = 0;
   let pitch = 0;
+  let bank = 0;
 
   try {
     gppYaw0 = data.readFloat64();
@@ -317,6 +318,7 @@ export function printCameraData(data: RawBuffer): void {
     altitude = data.readFloat64();
     heading = data.readFloat64();
     pitch = data.readFloat64();
+    bank = data.readFloat64();
   } catch (err) {
     log(
       "Camera data read error: " +
@@ -336,6 +338,7 @@ export function printCameraData(data: RawBuffer): void {
     aircraft_altitude: altitude,
     aircraft_heading: radiansToDegrees(heading),
     aircraft_pitch: -1 * radiansToDegrees(pitch),
+    aircraft_bank: radiansToDegrees(bank),
   };
 }
 
