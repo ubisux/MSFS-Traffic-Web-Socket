@@ -4,24 +4,28 @@ The Aircraft Movement API allows external applications to control the user aircr
 
 ## Overview
 
-The API runs on port 8081 and provides endpoints to:
-- Set aircraft position (latitude, longitude, altitude, heading)
+- Set aircraft position, heading, pitch, and bank
 - Check server health status
 
 ## Endpoints
 
 ### POST /move
-Sets the aircraft position to the specified coordinates.
+Sets the aircraft position and attitude to the specified values.
 
 **Request Body (JSON):**
 ```json
 {
-    "lat": 40.7128,    // Latitude in degrees (-90 to 90)
-    "lon": -74.0060,   // Longitude in degrees (-180 to 180)
-    "alt": 5000,       // Altitude in feet (-1000 to 100000)
-    "heading": 90       // Heading in degrees (0 to 360)
+    "lat": 40.7128,
+    "lon": -74.0060,
+    "alt": 5000,
+    "heading": 90,
+    "pitch": 0,
+    "bank": 0,
+    "cockpit_camera_zoom": 50
 }
 ```
+
+The bridge writes latitude, longitude, altitude, heading, pitch, bank, and cockpit camera zoom through its registered SimConnect data definition. `bank` is in degrees in the request and converted to radians, matching the `PLANE BANK DEGREES` SimVar units.
 
 **Response (200 OK):**
 ```json
@@ -32,7 +36,10 @@ Sets the aircraft position to the specified coordinates.
         "lat": 40.7128,
         "lon": -74.0060,
         "alt": 5000,
-        "heading": 90
+        "heading": 90,
+        "pitch": 0,
+        "bank": 0,
+        "cockpit_camera_zoom": 50
     }
 }
 ```
@@ -95,7 +102,10 @@ const data = {
     lat: 40.7128,
     lon: -74.0060,
     alt: 5000,
-    heading: 90
+    heading: 90,
+    pitch: 0,
+    bank: 0,
+    cockpit_camera_zoom: 50
 };
 
 fetch('http://localhost:8081/move', {
@@ -112,12 +122,12 @@ fetch('http://localhost:8081/move', {
 
 ## Validation Rules
 
-The API validates all input data:
-
 - **Latitude**: Must be between -90 and 90 degrees
 - **Longitude**: Must be between -180 and 180 degrees
 - **Altitude**: Must be between -1000 and 100,000 feet
 - **Heading**: Must be between 0 and 360 degrees
+- **Pitch**: Must be between -90 and 90 degrees
+- **Bank**: Must be between -180 and 180 degrees
 
 ## Integration with SimConnect
 
@@ -125,7 +135,7 @@ The aircraft movement API integrates with the existing SimConnect bridge:
 
 1. **HTTP Server**: Runs on port 8081 and accepts POST requests
 2. **Data Processing**: Validates and queues movement commands
-3. **SimConnect Integration**: Uses `SimConnect_SetDataOnSimObject` to set aircraft position
+3. **SimConnect Integration**: Writes position, heading, pitch, bank, and cockpit camera zoom using the movement data definition
 4. **Thread Safety**: Uses mutexes to ensure thread-safe operation
 
 ## Building and Running

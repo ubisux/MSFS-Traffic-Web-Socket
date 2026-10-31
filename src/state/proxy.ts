@@ -1,3 +1,4 @@
+import type { AircraftConfig } from "../shared/types.ts";
 import type { MutableRef } from "./common.ts";
 import type { ProxyPilot } from "../shared/types.ts";
 
@@ -23,4 +24,7 @@ export function setEuroScopeState(
 export const proxyCorrTimer: MutableRef<Timer | undefined> = {
   value: undefined,
 };
+
+/** Latest ACC config patch by normalized VATSIM callsign; survives disconnects. */
+export const aircraftConfigs = new Map<string, AircraftConfig>();
 export const nextProxyId: MutableRef<number> = { value: 0 };

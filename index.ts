@@ -1,6 +1,7 @@
 import { startAircraftMovementControl } from "./src/aircraft_movement.ts";
 import { updateTuiState } from "./src/bridge.ts";
 import { readEnvConfig } from "./src/config.ts";
+import { ifpsDepAirportLoop } from "./src/connectors/ifps/dep_airport.ts";
 import { fsdDataLoop } from "./src/connectors/fsd-data/fsd_data_corr.ts";
 import { startProxyThreads } from "./src/connectors/proxy/proxy_bridge.ts";
 import { proxyCorrLoop } from "./src/connectors/proxy/proxy_corr.ts";
@@ -35,6 +36,7 @@ try {
   startAircraftMovementControl(S.quit);
   S.fsdDataTimer.value = setTimeout(fsdDataLoop, 0);
   S.transceiversDataTimer.value = setTimeout(transceiversDataLoop, 0);
+  S.ifpsDepAirportTimer.value = setTimeout(ifpsDepAirportLoop, 0);
   S.proxyCorrTimer.value = setTimeout(proxyCorrLoop, 0);
 
   // Handle graceful shutdown
@@ -44,6 +46,7 @@ try {
     stopPollLoop();
     clearTimeout(S.fsdDataTimer.value);
     clearTimeout(S.transceiversDataTimer.value);
+    clearTimeout(S.ifpsDepAirportTimer.value);
     clearTimeout(S.proxyCorrTimer.value);
     clearInterval(S.tuiTimer.value);
     S.handle.value?.close();
@@ -55,6 +58,9 @@ try {
     stopPollLoop();
     clearInterval(S.tuiTimer.value);
     clearTimeout(S.transceiversDataTimer.value);
+    clearTimeout(S.ifpsDepAirportTimer.value);
+    clearTimeout(S.fsdDataTimer.value);
+    clearTimeout(S.proxyCorrTimer.value);
     S.handle.value?.close();
     process.exit(0);
   });

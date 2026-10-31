@@ -11,6 +11,8 @@ export let trackAudioWsUrl = "ws://127.0.0.1:49080/ws";
 export let trackAudioConnectTimeoutMs = 3000;
 export let trackAudioMessageTimeoutMs = 3000;
 export let transceiversDataUrl = "https://data.vatsim.net/v3/transceivers-data.json";
+export let ifpsDepAirportUrl = "https://api.viffsys.com/ifps/depAirport";
+export let ifpsDepAirportRefreshIntervalSec = 15.0;
 
 export function readEnvConfig(): void {
   const simEnv = Bun.env["SIMCONNECT_FETCH_INTERVAL"];
@@ -18,7 +20,7 @@ export function readEnvConfig(): void {
     const val = parseFloat(simEnv);
     if (val >= 0.1) simconnectFetchIntervalSec = val;
   }
-  if (simconnectFetchIntervalSec < 0.01) simconnectFetchIntervalSec = 0.01;
+  if (simconnectFetchIntervalSec < 0.1) simconnectFetchIntervalSec = 0.1;
 
   const fsdDataFetchEnv = Bun.env["FSD_DATA_FETCH_INTERVAL"];
   if (fsdDataFetchEnv) {
@@ -70,6 +72,18 @@ export function readEnvConfig(): void {
   }
   const transceiversDataUrlEnv = Bun.env["TRANSCEIVERS_DATA_URL"];
   if (transceiversDataUrlEnv) transceiversDataUrl = transceiversDataUrlEnv;
+  const ifpsDepAirportUrlEnv = Bun.env["IFPS_DEP_AIRPORT_URL"];
+  if (ifpsDepAirportUrlEnv) ifpsDepAirportUrl = ifpsDepAirportUrlEnv;
+
+  const ifpsDepAirportRefreshEnv = Bun.env["IFPS_DEP_AIRPORT_REFRESH_INTERVAL"];
+  if (ifpsDepAirportRefreshEnv) {
+    const val = parseFloat(ifpsDepAirportRefreshEnv);
+    if (val >= 1.0) ifpsDepAirportRefreshIntervalSec = val;
+  }
+  if (ifpsDepAirportRefreshIntervalSec < 1.0) {
+    ifpsDepAirportRefreshIntervalSec = 1.0;
+  }
+
 
   log("Configuration:");
   log(`  SimConnect fetch interval: ${simconnectFetchIntervalSec} seconds`);
@@ -83,4 +97,8 @@ export function readEnvConfig(): void {
   log(`  TrackAudio websocket: ${trackAudioWsUrl}`);
   log(`  TrackAudio timeouts: ${trackAudioConnectTimeoutMs}/${trackAudioMessageTimeoutMs} ms`);
   log(`  Transceivers data URL: ${transceiversDataUrl}`);
+  log(`  IFPS departures URL: ${ifpsDepAirportUrl}`);
+  log(
+    `  IFPS departures refresh interval: ${ifpsDepAirportRefreshIntervalSec} seconds`,
+  );
 }

@@ -2,7 +2,7 @@ import type { AddressInfo } from "node:net";
 import * as net from "node:net";
 import { log } from "../../loggers/logger.ts";
 import { logPacket } from "../../loggers/proxy_packet_logger.ts";
-import type { ProxyData, ProxyPilot } from "../../shared/types.ts";
+import type { AircraftConfig, ProxyData, ProxyPilot } from "../../shared/types.ts";
 import {
   PROXY_ACTIVE_TIMEOUT_SEC,
   PROXY_HOST,
@@ -16,7 +16,9 @@ import {
   proxyPilots,
   setEuroScopeState,
   setLastProxyUpdateTime,
+  aircraftConfigs,
 } from "../../state/proxy.ts";
+import { MAX_PROXY_FRAME_BYTES, splitProxyFrames } from "./proxy_frames.ts";
 
 let debug = false;
 let debugJson = false;
@@ -33,8 +35,6 @@ function withPilotsLock<T>(fn: () => T): T {
     pilotsMutex = false;
   }
 }
-
-let partialMessage = "";
 
 export function cleanupStaleProxyPilots(nowSec = Math.floor(Date.now() / 1000)): void {
   withPilotsLock(() => {
@@ -75,6 +75,32 @@ export function cleanupStaleProxyPilots(nowSec = Math.floor(Date.now() / 1000)):
     }
   });
 }
+function isAircraftConfigPacket(value: unknown): value is { config: AircraftConfig } {
+  return typeof value === "object" && value !== null && "config" in value &&
+    typeof value.config === "object" && value.config !== null &&
+    !Array.isArray(value.config);
+}
+
+function mergeAircraftConfig(
+  previous: AircraftConfig,
+  patch: AircraftConfig,
+): AircraftConfig {
+  const merged = { ...previous };
+  for (const [key, value] of Object.entries(patch)) {
+    const oldValue = merged[key];
+    if (isAircraftConfig(value) && isAircraftConfig(oldValue)) {
+      merged[key] = mergeAircraftConfig(oldValue, value);
+    } else {
+      merged[key] = value;
+    }
+  }
+  return merged;
+}
+
+function isAircraftConfig(value: unknown): value is AircraftConfig {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 
 function parseAircraftData(data: string): void {
   withPilotsLock(() => {
@@ -90,8 +116,25 @@ function parseAircraftData(data: string): void {
     const scratchpadRegex = /\$CQ[^:]+:@\d+:SC:([^:]+):(.*)/g;
     // Regex for disconnect messages (#DP(callsign):(network ID))
     const disconnectRegex = /#DP\(?([A-Za-z0-9_]+)\)?(?::(\d+))?/g;
+    // Callsign-specific ACC messages contain JSON config patches.
+    const aircraftConfigRegex = /^\$CQ([^:]+):@\d+:ACC:(\{.*\})\s*$/;
 
     for (const line of data.split("\n")) {
+      const configMatch = aircraftConfigRegex.exec(line.trim());
+      if (configMatch) {
+        const callsign = configMatch[1]!.trim().toUpperCase();
+        try {
+          const parsed: unknown = JSON.parse(configMatch[2]!);
+          if (isAircraftConfigPacket(parsed)) {
+            aircraftConfigs.set(
+              callsign,
+              mergeAircraftConfig(aircraftConfigs.get(callsign) ?? {}, parsed.config),
+            );
+          }
+        } catch (err) {
+          if (debug) log(`Ignoring invalid aircraft config for ${callsign}: ${err}`);
+        }
+      }
       // 1. Aircraft position parsing
       let match: RegExpExecArray | null;
       while ((match = aircraftRegex.exec(line)) !== null) {
@@ -281,6 +324,7 @@ function handleConnection(
 ): void {
   function connect(): void {
     const sock = new net.Socket();
+    let buf = "";
 
     sock.on("error", (err) => {
       log(`[${label}] Socket error: ${err.message}`);
@@ -300,45 +344,37 @@ function handleConnection(
       }, 200);
     });
 
-    let buf = partialMessage;
-    partialMessage = "";
     sock.on("data", (chunk) => {
-      const received = chunk.toString("binary");
-      buf += received;
-
-      let idx: number;
-      while ((idx = buf.indexOf("\r\n")) !== -1) {
-        const completeMsg = buf.slice(0, idx + 2);
-        buf = buf.slice(idx + 2);
+      const { frames, remainder } = splitProxyFrames(buf + chunk.toString("binary"));
+      buf = remainder;
+      for (const completeMsg of frames) {
         const clean = completeMsg.replace(/\r?\n/g, "");
         logPacket(label, clean);
 
-        // Parse client init
         if (!euroScopeState && label === "CLIENT") {
           const initRegex =
-            /%([A-Z_]+):\d+:\d+:\d+:\d+:(-?\d+\.\d+):(-?\d+\.\d+):\d+/;
+            /%([A-Z_]+):\d+:\d+:\d+:(-?\d+\.\d+):(-?\d+\.\d+):\d+/;
           const match = initRegex.exec(clean);
           if (match) {
             const callsign = match[1]!;
             const lat = parseFloat(match[2]!);
             const lon = parseFloat(match[3]!);
             setEuroScopeState({ callsign, lat, lon });
-            log(
-              `Parsed client init: callsign=${callsign}, lat=${lat}, lon=${lon}`,
-            );
+            log(`Parsed client init: callsign=${callsign}, lat=${lat}, lon=${lon}`);
           }
         }
-
-        // Parse aircraft data
         parseAircraftData(completeMsg);
       }
-      partialMessage = buf;
+      if (buf.length > 0 && Buffer.byteLength(buf, "binary") > MAX_PROXY_FRAME_BYTES) {
+        log(`[${label}] Dropping oversized unterminated proxy frame`);
+        buf = "";
+      }
+    });
+    sock.on("close", () => {
+      if (label === "CLIENT") setEuroScopeState(undefined);
+      setTimeout(connect, 15_000);
     });
 
-    sock.on("close", () => {
-      // log(`[${label}] Disconnected. Retrying in 15 seconds...`);
-      setTimeout(connect, 15000);
-    });
   }
   connect();
 }

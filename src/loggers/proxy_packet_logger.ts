@@ -1,7 +1,8 @@
 import type { LogEntry } from "@rezi-ui/core";
 import { appendFileSync } from "fs";
 
-let _packetLogs: LogEntry[] = [];
+const PACKET_LOG_BUFFER_LIMIT = 100;
+const _packetLogs: LogEntry[] = [];
 
 export function getPacketLogs(): LogEntry[] {
   return _packetLogs;
@@ -22,5 +23,6 @@ export function logPacket(label: string, msg: string): void {
   } catch {
     process.stderr.write(`Failed to write to proxy_packets.log: ${line}`);
   }
-  _packetLogs = [..._packetLogs, entry].slice(-100);
+  if (_packetLogs.length === PACKET_LOG_BUFFER_LIMIT) _packetLogs.shift();
+  _packetLogs.push(entry);
 }

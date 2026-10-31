@@ -75,10 +75,13 @@ The following environment variables may be used to tune polling:
 - `PROXY_CORRELATION_INTERVAL` (default `1` second)
 - `AIRCRAFT_TTL_SECONDS` (default `30` seconds)
 - `SIMCONNECT_RECONNECT_DELAY` (default `5` seconds)
+- `IFPS_DEP_AIRPORT_REFRESH_INTERVAL` (default `15` seconds)
 
 ## APIs
 
 - `GET http://localhost:8080/aircraft` returns `{ aircraft, camera }`; each aircraft includes a `transceivers` array matched by callsign from VATSIM's `/v3/transceivers-data.json` feed. Each transceiver has `id`, `frequency` (Hz), `latDeg`, `lonDeg`, `heightMslM`, and `heightAglM`; unmatched aircraft receive `[]`. Feed refreshes every 15 seconds. Override the URL with `TRANSCEIVERS_DATA_URL`.
+- `GET http://localhost:8080/aircrafts` includes `config` per aircraft: the latest accumulated config from VATSIM `$CQ<callsign>:@<id>:ACC:{"config":{...}}` packets. Nested config objects merge across partial updates (for example, an engine RPM update preserves existing lights); disconnects do not erase the callsign's stored config. Missing config is `null`.
+- `/aircrafts` also includes `ifps` per aircraft, matched by departure airport and callsign from the VHHH/VMMC IFPS feeds, refreshed every 15 seconds; unmatched aircraft receive `null`. The IFPS base URL and interval are configurable via `IFPS_DEP_AIRPORT_URL` and `IFPS_DEP_AIRPORT_REFRESH_INTERVAL`.
 - Movement and reset APIs are documented in [AIRCRAFT_MOVEMENT_API.md](AIRCRAFT_MOVEMENT_API.md).
 - The TowerView frontend consumes the aircraft endpoint and can be run separately from the bridge.
 

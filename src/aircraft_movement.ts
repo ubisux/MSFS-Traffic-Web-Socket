@@ -1,15 +1,6 @@
-import {
-  RawBuffer,
-  SimConnectConnection,
-  SimConnectConstants,
-} from "node-simconnect";
+import { InitPosition, RawBuffer, SimConnectConnection, SimConnectConstants, SimConnectDataType } from "node-simconnect";
 import { log } from "./loggers/logger.ts";
-import {
-  DEFINITION_3,
-  DEFINITION_4,
-  MOVEMENT_HTTP_PORT,
-  degreesToRadians,
-} from "./shared/types.ts";
+import { DEFINITION_3, DEFINITION_4, MOVEMENT_HTTP_PORT } from "./shared/types.ts";
 
 interface AircraftMovementData {
   latitude: number;
@@ -17,6 +8,7 @@ interface AircraftMovementData {
   altitude: number;
   heading: number;
   pitch: number;
+  bank: number;
   cockpitCameraZoom: number;
 }
 
@@ -33,6 +25,7 @@ let currentMovementData: AircraftMovementData = {
   altitude: 0,
   heading: 0,
   pitch: 0,
+  bank: 0,
   cockpitCameraZoom: 1.0,
 };
 let hasMovementData = false;
@@ -53,37 +46,13 @@ export function setupAircraftMovementDefinition(): void {
     return;
   }
 
-  movementHandle.addToDataDefinition(
-    DEFINITION_3,
-    "PLANE LATITUDE",
-    "degrees",
-    4,
-  ); // FLOAT64
-  movementHandle.addToDataDefinition(
-    DEFINITION_3,
-    "PLANE LONGITUDE",
-    "degrees",
-    4,
-  );
+  movementHandle.addToDataDefinition(DEFINITION_3, "PLANE LATITUDE", "degrees", 4);
+  movementHandle.addToDataDefinition(DEFINITION_3, "PLANE LONGITUDE", "degrees", 4);
   movementHandle.addToDataDefinition(DEFINITION_3, "PLANE ALTITUDE", "ft", 4);
-  movementHandle.addToDataDefinition(
-    DEFINITION_3,
-    "PLANE HEADING DEGREES TRUE",
-    "radian",
-    4,
-  );
-  movementHandle.addToDataDefinition(
-    DEFINITION_3,
-    "PLANE PITCH DEGREES",
-    "radian",
-    4,
-  );
-  movementHandle.addToDataDefinition(
-    DEFINITION_3,
-    "COCKPIT CAMERA ZOOM",
-    "percentage",
-    4,
-  );
+  movementHandle.addToDataDefinition(DEFINITION_3, "PLANE HEADING DEGREES TRUE", "radian", 4);
+  movementHandle.addToDataDefinition(DEFINITION_3, "PLANE PITCH DEGREES", "radian", 4);
+  movementHandle.addToDataDefinition(DEFINITION_3, "PLANE BANK DEGREES", "radian", 4);
+  movementHandle.addToDataDefinition(DEFINITION_3, "COCKPIT CAMERA ZOOM", "percentage", 4);
 
   movementHandle.addToDataDefinition(
     DEFINITION_4,
@@ -92,7 +61,7 @@ export function setupAircraftMovementDefinition(): void {
     1,
   ); // INT32
 
-  log("Aircraft movement data definition (DEFINITION_3) set up successfully");
+  log("Aircraft movement data definitions set up successfully");
 }
 
 function setAircraftPosition(data: AircraftMovementData): void {
@@ -100,27 +69,15 @@ function setAircraftPosition(data: AircraftMovementData): void {
     log("SimConnect handle is null, cannot set aircraft position");
     return;
   }
-
-  const headingRad = degreesToRadians(data.heading);
-  const pitchRad = degreesToRadians(data.pitch);
-
-  const buf = new RawBuffer(48);
-  buf.writeFloat64(data.latitude);
-  buf.writeFloat64(data.longitude);
-  buf.writeFloat64(data.altitude);
-  buf.writeFloat64(headingRad);
-  buf.writeFloat64(pitchRad);
-  buf.writeFloat64(data.cockpitCameraZoom);
-
-  movementHandle.setDataOnSimObject(
-    DEFINITION_3,
-    SimConnectConstants.OBJECT_ID_USER,
-    {
-      buffer: buf,
-      arrayCount: 0,
-      tagged: false,
-    },
-  );
+  const position = new RawBuffer(56);
+  position.writeFloat64(data.latitude);
+  position.writeFloat64(data.longitude);
+  position.writeFloat64(data.altitude);
+  position.writeFloat64((data.heading * Math.PI) / 180);
+  position.writeFloat64((data.pitch * Math.PI) / 180);
+  position.writeFloat64((data.bank * Math.PI) / 180);
+  position.writeFloat64(data.cockpitCameraZoom);
+  movementHandle.setDataOnSimObject(DEFINITION_3, SimConnectConstants.OBJECT_ID_USER, { buffer: position, arrayCount: 0, tagged: false });
 }
 
 function sendCockpitViewReset(resetValue: number): void {
@@ -192,6 +149,7 @@ function aircraftMovementServer(): void {
           const alt = Number(body["alt"]);
           const heading = Number(body["heading"]);
           const pitch = Number(body["pitch"]);
+          const bank = Number(body["bank"] ?? 0);
           const cockpitCameraZoom = Number(body["cockpit_camera_zoom"]);
 
           if (
@@ -200,12 +158,13 @@ function aircraftMovementServer(): void {
             isNaN(alt) ||
             isNaN(heading) ||
             isNaN(pitch) ||
+            isNaN(bank) ||
             isNaN(cockpitCameraZoom)
           ) {
             return new Response(
               JSON.stringify({
                 error:
-                  "Missing required fields: lat, lon, alt, heading, pitch, cockpit_camera_zoom",
+                  "Missing required fields: lat, lon, alt, heading, pitch, bank, cockpit_camera_zoom",
               }),
               {
                 status: 400,
@@ -269,6 +228,17 @@ function aircraftMovementServer(): void {
               },
             );
           }
+          if (bank < -180 || bank > 180) {
+            return new Response(
+              JSON.stringify({
+                error: "Bank must be between -180 and 180 degrees",
+              }),
+              {
+                status: 400,
+                headers: { ...headers, "Content-Type": "application/json" },
+              },
+            );
+          }
           if (cockpitCameraZoom < 0 || cockpitCameraZoom > 100) {
             return new Response(
               JSON.stringify({
@@ -280,7 +250,6 @@ function aircraftMovementServer(): void {
               },
             );
           }
-
           movementMutex = true;
           currentMovementData = {
             latitude: lat,
@@ -288,6 +257,7 @@ function aircraftMovementServer(): void {
             altitude: alt,
             heading,
             pitch,
+            bank,
             cockpitCameraZoom,
           };
           hasMovementData = true;
@@ -302,6 +272,7 @@ function aircraftMovementServer(): void {
               alt,
               heading,
               pitch,
+              bank,
               cockpit_camera_zoom: cockpitCameraZoom,
             },
           };

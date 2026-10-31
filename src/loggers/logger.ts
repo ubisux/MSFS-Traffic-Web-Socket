@@ -1,7 +1,8 @@
 import type { LogEntry, LogLevel } from "@rezi-ui/core";
 import { appendFileSync } from "fs";
 
-let _logs: LogEntry[] = [];
+const LOG_BUFFER_LIMIT = 100;
+const _logs: LogEntry[] = [];
 export function getLogs(): LogEntry[] {
   return _logs;
 }
@@ -21,5 +22,6 @@ export function log(msg: string, level: LogLevel = "info"): void {
   } catch {
     process.stderr.write(`Failed to write to bridge.log: ${line}`);
   }
-  _logs = [..._logs, entry].slice(-100);
+  if (_logs.length === LOG_BUFFER_LIMIT) _logs.shift();
+  _logs.push(entry);
 }
