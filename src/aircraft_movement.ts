@@ -16,6 +16,9 @@ interface CockpitViewResetData {
   reset: number;
 }
 
+// Keep camera properties separate from aircraft position/attitude updates.
+const COCKPIT_ZOOM_DEFINITION = 5;
+
 let movementHandle: SimConnectConnection | null = null;
 
 let movementMutex = false;
@@ -52,7 +55,7 @@ export function setupAircraftMovementDefinition(): void {
   movementHandle.addToDataDefinition(DEFINITION_3, "PLANE HEADING DEGREES TRUE", "radian", 4);
   movementHandle.addToDataDefinition(DEFINITION_3, "PLANE PITCH DEGREES", "radian", 4);
   movementHandle.addToDataDefinition(DEFINITION_3, "PLANE BANK DEGREES", "radian", 4);
-  movementHandle.addToDataDefinition(DEFINITION_3, "COCKPIT CAMERA ZOOM", "percentage", 4);
+  movementHandle.addToDataDefinition(COCKPIT_ZOOM_DEFINITION, "COCKPIT CAMERA ZOOM", "percent", SimConnectDataType.FLOAT64);
 
   movementHandle.addToDataDefinition(
     DEFINITION_4,
@@ -69,15 +72,18 @@ function setAircraftPosition(data: AircraftMovementData): void {
     log("SimConnect handle is null, cannot set aircraft position");
     return;
   }
-  const position = new RawBuffer(56);
+  const position = new RawBuffer(48);
   position.writeFloat64(data.latitude);
   position.writeFloat64(data.longitude);
   position.writeFloat64(data.altitude);
   position.writeFloat64((data.heading * Math.PI) / 180);
   position.writeFloat64((data.pitch * Math.PI) / 180);
   position.writeFloat64((data.bank * Math.PI) / 180);
-  position.writeFloat64(data.cockpitCameraZoom);
   movementHandle.setDataOnSimObject(DEFINITION_3, SimConnectConstants.OBJECT_ID_USER, { buffer: position, arrayCount: 0, tagged: false });
+
+  const zoom = new RawBuffer(8);
+  zoom.writeFloat64(data.cockpitCameraZoom);
+  movementHandle.setDataOnSimObject(COCKPIT_ZOOM_DEFINITION, SimConnectConstants.OBJECT_ID_USER, { buffer: zoom, arrayCount: 0, tagged: false });
 }
 
 function sendCockpitViewReset(resetValue: number): void {

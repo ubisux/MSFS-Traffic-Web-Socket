@@ -25,7 +25,9 @@ Sets the aircraft position and attitude to the specified values.
 }
 ```
 
-The bridge writes latitude, longitude, altitude, heading, pitch, bank, and cockpit camera zoom through its registered SimConnect data definition. `bank` is in degrees in the request and converted to radians, matching the `PLANE BANK DEGREES` SimVar units.
+The bridge writes latitude, longitude, altitude, heading, pitch, and bank through the aircraft position data definition, then writes `cockpit_camera_zoom` separately through a dedicated camera data definition. Zoom uses the same 0–100 percentage for MSFS 2020 and 2024. `bank` is in degrees in the request and converted to radians, matching the `PLANE BANK DEGREES` SimVar units.
+
+The success response acknowledges receipt, not simulator application. Independent zoom dispatch has been smoke-tested through the HTTP endpoint with a recording SimConnect handle; visible zoom application in MSFS 2024 requires verification on a 2024 installation.
 
 **Response (200 OK):**
 ```json

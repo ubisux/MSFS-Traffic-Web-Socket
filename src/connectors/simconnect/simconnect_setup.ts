@@ -6,6 +6,7 @@ import {
   SimConnectPeriod,
   SimObjectType,
 } from "node-simconnect";
+import { openSimConnectWithFallback } from "./simconnect_protocol.ts";
 import {
   setMovementSimConnectHandle,
   setupAircraftMovementDefinition,
@@ -93,7 +94,6 @@ function setupDataDefinitions(): void {
     "",
     sc.STRING256,
   );
-
   S.handle.value.addToDataDefinition(
     DEFINITION_2,
     "CAMERA GAMEPLAY PITCH YAW:0",
@@ -206,11 +206,15 @@ export function stopPollLoop(): void {
 export async function connectAndSetup(): Promise<void> {
   while (!S.shouldExit.value) {
     try {
-      const result = await open("MSFS SimConnect Bridge", Protocol.KittyHawk);
+      const { result, protocol } = await openSimConnectWithFallback(
+        (protocol) => open("MSFS SimConnect Bridge", protocol),
+        (error) =>
+          log(`MSFS 2024 SimConnect unavailable; trying MSFS 2020 protocol: ${error instanceof Error ? error.message : String(error)}`),
+      );
       S.handle.value = result.handle;
       setMovementSimConnectHandle(S.handle.value);
       S.simconnectConnected.value = true;
-      log("SimConnect connected.");
+      log(`SimConnect connected using ${protocol === Protocol.SunRise ? "MSFS 2024" : "MSFS 2020-compatible"} protocol.`);
 
       setupDataDefinitions();
 

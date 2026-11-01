@@ -324,8 +324,8 @@ export function printCameraData(data: RawBuffer): void {
       "Camera data read error: " +
         (err instanceof Error ? err.message : String(err)),
     );
+    return;
   }
-
   S.cameraJson.current = {
     gameplay_pitch_yaw_0: gppYaw0,
     gameplay_pitch_yaw_1: gppYaw1,

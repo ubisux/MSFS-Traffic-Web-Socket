@@ -20,6 +20,12 @@ GET http://localhost:8080/stations?stations=KSEA_TWR,SEA_E_GND
 
 The bridge connects for the request, disables RX on all existing TrackAudio stations, enables RX on the requested callsigns, and closes the websocket. Configure `TRACKAUDIO_WS_URL`, `TRACKAUDIO_CONNECT_TIMEOUT_MS`, and `TRACKAUDIO_MESSAGE_TIMEOUT_MS` through the environment when needed.
 
+## Simulator protocol selection
+
+The bridge first negotiates the MSFS 2024 SimConnect protocol (`SunRise`). If that handshake fails, it retries with the MSFS 2020-compatible protocol (`KittyHawk`). The active protocol is reported after connection. A failed 2024 negotiation can add one connection timeout before a running MSFS 2020 instance connects.
+
+Both protocols request gameplay pitch/yaw in the supported `radians` unit and coordinates in `degrees`. The camera decoder publishes only complete packets; a decode failure leaves the last complete camera sample unchanged.
+
 ## Requirements
 
 - Windows x64.
