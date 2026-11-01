@@ -18,7 +18,7 @@ export function extractDepartureRunway(route: string): string {
       if (/[a-zA-Z0-9]/.test(c)) runway += c;
       else break;
     }
-    return runway;
+    return /^[0-9]{2}[LCR]?$/.test(runway) ? runway : "";
   }
   const firstWord = route.substring(0, spacePos);
   const slashPos = firstWord.indexOf("/");
@@ -29,7 +29,7 @@ export function extractDepartureRunway(route: string): string {
     if (/[a-zA-Z0-9]/.test(c)) runway += c;
     else break;
   }
-  return runway;
+  return /^[0-9]{2}[LCR]?$/.test(runway) ? runway : "";
 }
 
 export function extractArrivalSTAR(route: string): string {
@@ -53,7 +53,7 @@ export function extractArrivalRunway(route: string): string {
     if (/[a-zA-Z0-9]/.test(c)) runway += c;
     else break;
   }
-  return runway;
+  return /^[0-9]{2}[LCR]?$/.test(runway) ? runway : "";
 }
 
 export function parseIso8601ToEpochSec(iso8601: string): number {
