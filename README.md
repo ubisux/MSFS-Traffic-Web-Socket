@@ -10,6 +10,18 @@ This project is a TypeScript bridge for Microsoft Flight Simulator (MSFS). It re
 - Provides aircraft movement and camera reset endpoints on port 8081; see [AIRCRAFT_MOVEMENT_API.md](AIRCRAFT_MOVEMENT_API.md).
 - Displays bridge, proxy, FSD, and SimConnect status in a terminal UI.
 
+## Tower binary stream
+
+`ws://localhost:8080/ws/tower` carries version-1 Protobuf envelopes without compression. Aircraft motion and simulator camera feedback are published immediately from independent `SIM_FRAME` subscriptions. Discovery remains on its existing configured interval; metadata/membership snapshots are sent initially and every second. `SIMCONNECT_FETCH_INTERVAL` is clamped to at least 0.1 s and no longer limits frame telemetry.
+
+Only loopback peers with exact Origin `https://vathk.com` or `http://localhost:3000` may upgrade. Legacy HTTP routes and their access rules remain unchanged. Deploy this bridge before the new Website; tower has no HTTP fallback. HTTPS browser restrictions on plain local sockets require local TLS/certificates outside this change, not a public command relay.
+
+Camera Move/Reset messages dispatch immediately through existing SimConnect encoders, bypassing the HTTP movement timer. Results acknowledge dispatch, not simulator application. Simulator feedback remains authoritative for the rendered camera. Disconnect drops commands; reconnect starts a new state epoch without replay. Slow sockets stop receiving deltas and receive a fresh snapshot on drain; command-result backlog is bounded.
+
+Canonical schema: `protocol/tower.proto`. Regenerate static `protobufjs/minimal` codecs with `bun run protocol:generate --website ../Website`; both repositories check in generated JS/declarations and Website also includes the schema, so Website builds independently. Run `bun test` for codec, recording-SimConnect, actual loopback WebSocket, and backpressure coverage. Simulator-visible behavior still requires an MSFS acceptance run.
+Generated codecs use the native ESM wrapper and expose the named `mtws` export. Keep this format: CommonJS output can pass Bun tests and production bundling while failing Vite's browser development imports.
+
+
 ## TrackAudio station receive API
 
 With TrackAudio running on its SDK websocket (default `ws://127.0.0.1:49080/ws`), select the stations to receive:

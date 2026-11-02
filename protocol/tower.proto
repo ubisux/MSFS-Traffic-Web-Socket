@@ -1,0 +1,88 @@
+syntax = "proto2";
+package mtws.tower.v1;
+message Envelope {
+ required uint32 version = 1;
+ required double sequence = 2;
+ optional double sample_time_ms = 3;
+ optional Snapshot snapshot = 10;
+ optional Motion motion = 11;
+ optional Camera camera = 12;
+ optional Move move = 13;
+ optional Reset reset = 14;
+ optional Result result = 15;
+ optional Status status = 16;
+ optional Heartbeat heartbeat = 17;
+}
+message Motion {
+ required sint32 simobjectid = 1;
+ required double latitude = 2;
+ required double longitude = 3;
+ required double altitude = 4;
+ required double heading = 5;
+ optional double groundspeed = 6;
+ optional double vertical_speed = 7;
+ optional int32 on_ground = 8;
+ required double revision = 9;
+}
+message Camera {
+ optional double gameplay_pitch_yaw_0 = 1;
+ optional double gameplay_pitch_yaw_1 = 2;
+ optional double cockpit_camera_zoom = 3;
+ optional double aircraft_latitude = 4;
+ optional double aircraft_longitude = 5;
+ optional double aircraft_altitude = 6;
+ optional double aircraft_heading = 7;
+ optional double aircraft_pitch = 8;
+ optional double aircraft_bank = 9;
+ optional int32 camera_state = 10;
+ optional int32 camera_view_type_and_index_0 = 11;
+ optional int32 camera_view_type_and_index_1 = 12;
+ required double revision = 13;
+}
+message AircraftMetadata {
+ required sint32 simobjectid = 1;
+ required string callsign = 2;
+ optional string type = 3;
+ optional string dep = 4;
+ optional string arr = 5;
+ optional string transponder = 6;
+ optional string transponder_asgn = 7;
+ optional string deptime = 8;
+ optional string dep_rwy = 9;
+ optional string dep_sid = 10;
+ optional string gate = 11;
+ optional string scratchpad = 12;
+ optional string arr_rwy = 13;
+ optional string arr_star = 14;
+ optional string registration = 15;
+ optional string tobt = 16;
+ optional string flightplan = 17;
+ repeated Transceiver transceivers = 18;
+}
+message Transceiver {
+ required double id = 1;
+ required double frequency = 2;
+ required double lat_deg = 3;
+ required double lon_deg = 4;
+ required double height_msl_m = 5;
+ required double height_agl_m = 6;
+}
+message Snapshot {
+ repeated AircraftMetadata aircraft = 1;
+ repeated Motion motion = 2;
+ optional Camera camera = 3;
+ required bool simconnect_connected = 4;
+}
+message Move {
+ required double lat = 1;
+ required double lon = 2;
+ required double alt = 3;
+ required double heading = 4;
+ required double pitch = 5;
+ required double bank = 6;
+ required double cockpit_camera_zoom = 7;
+}
+message Reset { required uint32 reset = 1; }
+message Result { required bool accepted = 1; optional string error = 2; }
+message Status { required bool simconnect_connected = 1; }
+message Heartbeat { required bool reply = 1; }

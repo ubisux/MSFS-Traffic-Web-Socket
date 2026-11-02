@@ -4,6 +4,7 @@ import { log } from "./loggers/logger.ts";
 import type { SimAircraftEntry } from "./shared/types.ts";
 import { radiansToDegrees } from "./shared/types.ts";
 import * as S from "./state.ts";
+import { publishAircraftMotion, publishCamera } from "./tower_stream.ts";
 
 const SIM_TRACK_INTERVAL_MS = 200;
 const SIM_TRACK_MAX_SAMPLES = 150;
@@ -63,8 +64,16 @@ export function buildAircraftJson(
 }
 
 // ===== Process Aircraft Data (called from event handler) =====
-export function printAircraftData(objectId: number, data: RawBuffer): void {
-  S.lastSimconnectUpdateTime.value = Math.floor(Date.now() / 1000);
+export function printAircraftData(objectId: number, data: RawBuffer): boolean {
+  return processAircraftData(objectId, data, false);
+}
+
+export function printAircraftMotion(objectId: number, data: RawBuffer): void {
+  if (!S.simAircraftMap.has(objectId)) return;
+  processAircraftData(objectId, data, true);
+}
+
+function processAircraftData(objectId: number, data: RawBuffer, motionOnly: boolean): boolean {
 
   let altitude = 0;
   let latitude = 0;
@@ -88,15 +97,18 @@ export function printAircraftData(objectId: number, data: RawBuffer): void {
     onGround = data.readInt32();
     groundVelocity = data.readInt32();
     verticalSpeed = data.readInt32();
-    title = data.readString256();
-    atcId = data.readString256();
+    if (!motionOnly) {
+      title = data.readString256();
+      atcId = data.readString256();
+    }
   } catch (err) {
     log(
       "Aircraft data read error: " +
         (err instanceof Error ? err.message : String(err)),
     );
-    return;
+    return false;
   }
+  S.lastSimconnectUpdateTime.value = Math.floor(Date.now() / 1000);
 
   let obj = S.simAircraftMap.get(objectId);
   if (!obj) {
@@ -288,7 +300,8 @@ export function printAircraftData(objectId: number, data: RawBuffer): void {
     }
   }
 
-  if (!obj.callsign) return;
+  publishAircraftMotion(obj);
+  return true;
 }
 
 // ===== Process Camera Data =====
@@ -340,6 +353,7 @@ export function printCameraData(data: RawBuffer): void {
     aircraft_pitch: -1 * radiansToDegrees(pitch),
     aircraft_bank: radiansToDegrees(bank),
   };
+  publishCamera(S.cameraJson.current);
 }
 
 // ===== Cleanup Stale SimObjects =====

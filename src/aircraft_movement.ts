@@ -1,6 +1,21 @@
 import { InitPosition, RawBuffer, SimConnectConnection, SimConnectConstants, SimConnectDataType } from "node-simconnect";
 import { log } from "./loggers/logger.ts";
 import { DEFINITION_3, DEFINITION_4, MOVEMENT_HTTP_PORT } from "./shared/types.ts";
+import * as S from './state.ts';
+import { validMove } from './tower_protocol.ts';
+import type { mtws } from './protocol/tower.generated.js';
+
+export function dispatchTowerMove(data: mtws.tower.v1.IMove): void {
+  if (!validMove(data)) throw new Error('invalid_move');
+  if (!movementHandle || !S.simconnectConnected.value) throw new Error('simconnect_unavailable');
+  setAircraftPosition({ latitude: data.lat, longitude: data.lon, altitude: data.alt,
+    heading: data.heading, pitch: data.pitch, bank: data.bank, cockpitCameraZoom: data.cockpit_camera_zoom });
+}
+
+export function dispatchTowerReset(): void {
+  if (!movementHandle || !S.simconnectConnected.value) throw new Error('simconnect_unavailable');
+  sendCockpitViewReset(1);
+}
 
 interface AircraftMovementData {
   latitude: number;

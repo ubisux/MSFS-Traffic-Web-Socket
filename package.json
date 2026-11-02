@@ -4,6 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "protocol:generate": "bun scripts/generate-tower-protocol.ts",
     "lint": "oxlint",
     "typecheck": "tsc --noEmit",
     "start": "bun .",
@@ -14,7 +15,8 @@
   "devDependencies": {
     "@types/bun": "^1.4.4",
     "lexe": "0.1.0-alpha.6",
-    "oxlint": "^1.90.0"
+    "oxlint": "^1.90.0",
+    "protobufjs-cli": "2.7.1"
   },
   "peerDependencies": {
     "typescript": "^7.0.2"
@@ -22,6 +24,7 @@
   "dependencies": {
     "@rezi-ui/core": "^0.1.0-beta.2",
     "@rezi-ui/node": "^0.1.0-beta.2",
-    "node-simconnect": "^4.2.1"
+    "node-simconnect": "^4.2.1",
+    "protobufjs": "8.8.1"
   }
 }

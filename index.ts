@@ -31,7 +31,7 @@ try {
   readEnvConfig();
 
   // Start long-lived background services
-  httpServerThread();
+  const httpServer = httpServerThread();
   startProxyThreads(S.quit);
   startAircraftMovementControl(S.quit);
   S.fsdDataTimer.value = setTimeout(fsdDataLoop, 0);
@@ -44,6 +44,7 @@ try {
     log("Shutting down...");
     S.shouldExit.value = true;
     stopPollLoop();
+    httpServer.stop();
     clearTimeout(S.fsdDataTimer.value);
     clearTimeout(S.transceiversDataTimer.value);
     clearTimeout(S.ifpsDepAirportTimer.value);
@@ -56,6 +57,7 @@ try {
   process.on("SIGTERM", () => {
     S.shouldExit.value = true;
     stopPollLoop();
+    httpServer.stop();
     clearInterval(S.tuiTimer.value);
     clearTimeout(S.transceiversDataTimer.value);
     clearTimeout(S.ifpsDepAirportTimer.value);

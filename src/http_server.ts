@@ -13,10 +13,15 @@ import type {
 import type { AircraftConfig } from "./shared/types.ts";
 import { BRIDGE_HTTP_PORT } from "./shared/types.ts";
 import * as S from "./state.ts";
+import { toApiAircraftEntry, type ApiAircraftEntry } from './aircraft_api.ts';
+import { createTowerStream, setTowerStream, type TowerPeerData, type TowerStream } from './tower_stream.ts';
+import { dispatchTowerMove, dispatchTowerReset } from './aircraft_movement.ts';
 
-type ApiAircraftEntry = Omit<SimAircraftEntry, "position_history" | "lastFSDDataUpdate" | "fsdCorrelationMisses" | "fsdCorrelationCandidate" | "fsdLastCorrelationEpochSec" | "fsdLatitude" | "fsdLongitude" | "fsdAltitude" | "fsdHeading" | "fsdGroundspeed" | "proxyLatitude" | "proxyLongitude" | "proxyAltitude" | "proxyGroundspeed" | "proxyCorrelationState" | "proxyCorrelationCandidate" | "proxyCorrelationMisses" | "proxyCorrelationStreak" | "proxyLastCorrelationEpochSec"> & {
-  transceivers: VatsimTransceiver[];
-};
+export function towerOriginAllowed(origin: string | null, address: string | undefined): boolean {
+  return (origin === 'https://vathk.com' || origin === 'http://localhost:3000') &&
+    (address === '127.0.0.1' || address === '::1' || address === '::ffff:127.0.0.1');
+}
+
 
 type ApiAircraftWithIfpsEntry = ApiAircraftEntry & {
   /** IFPS departure record for this aircraft's `dep` airport, or null. */
@@ -25,59 +30,6 @@ type ApiAircraftWithIfpsEntry = ApiAircraftEntry & {
   config: AircraftConfig | null;
 };
 
-function toApiAircraftEntry(
-  obj: SimAircraftEntry,
-  audioClients: Map<string, VatsimTransceiver[]>,
-): ApiAircraftEntry {
-  const {
-    position_history: _positionHistory,
-    lastFSDDataUpdate: _lastFSDDataUpdate,
-    fsdCorrelationMisses: _fsdCorrelationMisses,
-    fsdCorrelationCandidate: _fsdCorrelationCandidate,
-    fsdLastCorrelationEpochSec: _fsdLastCorrelationEpochSec,
-    fsdLatitude,
-    fsdLongitude,
-    fsdAltitude,
-    fsdHeading,
-    fsdGroundspeed,
-    proxyLatitude,
-    proxyLongitude,
-    proxyAltitude,
-    proxyGroundspeed,
-    proxyCorrelationState: _proxyCorrelationState,
-    proxyCorrelationCandidate: _proxyCorrelationCandidate,
-    proxyCorrelationMisses: _proxyCorrelationMisses,
-    proxyCorrelationStreak: _proxyCorrelationStreak,
-    proxyLastCorrelationEpochSec: _proxyLastCorrelationEpochSec,
-    ...apiEntry
-  } = obj;
-
-  if (!Number.isFinite(apiEntry.latitude)) {
-    if (typeof proxyLatitude === "number") apiEntry.latitude = proxyLatitude;
-    else if (typeof fsdLatitude === "number") apiEntry.latitude = fsdLatitude;
-  }
-  if (!Number.isFinite(apiEntry.longitude)) {
-    if (typeof proxyLongitude === "number") apiEntry.longitude = proxyLongitude;
-    else if (typeof fsdLongitude === "number") apiEntry.longitude = fsdLongitude;
-  }
-  if (!Number.isFinite(apiEntry.altitude)) {
-    if (typeof proxyAltitude === "number") apiEntry.altitude = proxyAltitude;
-    else if (typeof fsdAltitude === "number") apiEntry.altitude = fsdAltitude;
-  }
-  if (!Number.isFinite(apiEntry.heading) && typeof fsdHeading === "number") {
-    apiEntry.heading = fsdHeading;
-  }
-  if (!Number.isFinite(apiEntry.groundspeed)) {
-    if (typeof proxyGroundspeed === "number") apiEntry.groundspeed = proxyGroundspeed;
-    else if (typeof fsdGroundspeed === "number") apiEntry.groundspeed = fsdGroundspeed;
-  }
-
-  const key = obj.callsign.trim().toUpperCase();
-  return {
-    ...apiEntry,
-    transceivers: audioClients.get(key) ?? [],
-  };
-}
 
 function toApiAircraftWithIfpsEntry(
   obj: SimAircraftEntry,
@@ -172,15 +124,23 @@ export async function handleHttpRequest(req: Request): Promise<Response> {
 }
 
 // ===== HTTP Server =====
-export function httpServerThread(): void {
-  try {
-    Bun.serve({
-      port: BRIDGE_HTTP_PORT,
-      fetch: handleHttpRequest,
-    });
-
-    log(`HTTP server running on http://localhost:${BRIDGE_HTTP_PORT}/aircraft`);
-  } catch (err) {
-    log("HTTP server failed: " + (err instanceof Error ? err.message : err));
-  }
+export function httpServerThread(options: {port?:number; stream?:TowerStream} = {}) {
+  const stream = options.stream ?? createTowerStream({move:dispatchTowerMove,reset:dispatchTowerReset});
+  setTowerStream(stream);
+  const server = Bun.serve<TowerPeerData>({
+    port: options.port ?? BRIDGE_HTTP_PORT,
+    fetch(req, server) {
+      if(new URL(req.url).pathname !== '/ws/tower') return handleHttpRequest(req);
+      if(!towerOriginAllowed(req.headers.get('origin'),server.requestIP(req)?.address)) return new Response('Forbidden',{status:403});
+      if(req.headers.get('upgrade')?.toLowerCase() !== 'websocket') return new Response('WebSocket required',{status:426});
+      if(server.upgrade(req,{data:{blocked:false,results:[],lastCommand:0}})) return;
+      return new Response('Invalid upgrade',{status:400});
+    },
+    websocket: {
+      perMessageDeflate:false,maxPayloadLength:65536,backpressureLimit:1048576,closeOnBackpressureLimit:true,sendPings:true,
+      open:peer=>stream.open(peer),close:peer=>stream.close(peer),drain:peer=>stream.drain(peer),message:(peer,bytes)=>stream.message(peer,bytes),
+    },
+  });
+  log(`HTTP/tower WebSocket server running on localhost:${server.port}`);
+  return {server,stop(){stream.stop();setTowerStream(undefined);server.stop(true);}};
 }
